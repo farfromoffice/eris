@@ -18,7 +18,15 @@ using IrqHandler = void (*)(Registers&);
 
 void gdt_init();
 void idt_init();
+
 void pic_init();
+void pic_disable();
+void pic_mask(u8 irq);
+void pic_unmask(u8 irq);
+void pic_eoi(u8 irq);
+
+// Routed to whichever controller is in charge, the legacy pair or the APIC.
+void irq_init();
 void irq_register(u8 irq, IrqHandler handler);
 void irq_unmask(u8 irq);
 void irq_mask(u8 irq);

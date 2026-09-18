@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/apic.hpp>
 #include <eris/cpu.hpp>
 #include <eris/paging.hpp>
 #include <eris/io.hpp>
@@ -8,6 +9,7 @@
 #include <eris/compiler.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
+#include <eris/time.hpp>
 
 extern "C" void* isr_stub_table[256];
 
@@ -138,6 +140,15 @@ extern "C" void isr_dispatch(Registers& regs)
                              "cpu exception %u (%s)",
                              static_cast<unsigned>(regs.vector),
                              exception_names[regs.vector]);
+    }
+
+    if (regs.vector == vector_spurious)
+        return;
+
+    if (regs.vector == vector_lapic_timer) {
+        lapic_eoi();
+        timers_run();
+        return;
     }
 
     if (regs.vector >= 32 && regs.vector < 48) {

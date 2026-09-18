@@ -15,6 +15,12 @@ constexpr u8 eoi = 0x20;
 
 }
 
+void pic_disable()
+{
+    outb(pic1_data, 0xFF);
+    outb(pic2_data, 0xFF);
+}
+
 void pic_init()
 {
     const u8 mask1 = inb(pic1_data);
@@ -41,21 +47,21 @@ void pic_init()
     outb(pic2_data, mask2);
 }
 
-void irq_eoi(u8 irq)
+void pic_eoi(u8 irq)
 {
     if (irq >= 8)
         outb(pic2_command, eoi);
     outb(pic1_command, eoi);
 }
 
-void irq_unmask(u8 irq)
+void pic_unmask(u8 irq)
 {
     const u16 port = irq < 8 ? pic1_data : pic2_data;
     const u8 bit = static_cast<u8>(irq < 8 ? irq : irq - 8);
     outb(port, static_cast<u8>(inb(port) & ~(1u << bit)));
 }
 
-void irq_mask(u8 irq)
+void pic_mask(u8 irq)
 {
     const u16 port = irq < 8 ? pic1_data : pic2_data;
     const u8 bit = static_cast<u8>(irq < 8 ? irq : irq - 8);
