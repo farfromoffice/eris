@@ -8,3 +8,6 @@
 #define ERIS_NORETURN [[noreturn]]
 #define ERIS_NOINLINE __attribute__((noinline))
 #define ERIS_UNUSED   [[maybe_unused]]
+// Checks call sites against the format string. vprintk only implements
+// %c %s %d %i %u %x %X %p and the l length without widths or flags.
+#define ERIS_PRINTF(fmt, args) __attribute__((format(printf, fmt, args)))

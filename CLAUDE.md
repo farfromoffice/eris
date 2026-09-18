@@ -91,7 +91,7 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/ksyms.hpp` | `ksyms_lookup` for turning an address into a name |
 | `eris/cmdline.hpp` | `cmdline_has`, `cmdline_value`, `cmdline_raw` |
 | `eris/multiboot.hpp` | Boot information structures and flags |
-| `eris/compiler.hpp` | `ERIS_PACKED`, `ERIS_ALIGNED`, `ERIS_NORETURN` |
+| `eris/compiler.hpp` | `ERIS_PACKED`, `ERIS_ALIGNED`, `ERIS_NORETURN`, `ERIS_NOINLINE`, `ERIS_PRINTF` |
 | `eris/console.hpp` | `Console` interface, register and unregister, `console_write` |
 | `eris/printk.hpp` | `pr_debug` `pr_info` `pr_warn` `pr_err`, `vprintk` |
 | `eris/panic.hpp` | `panic`, never returns |
@@ -148,7 +148,8 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   initialises them at runtime through `.init_array`.
 * A `Ready` module holds exactly one reference on each dependency, taken on the
   transition to `Ready` and dropped on unload. A failed load holds none, no
-  failure path in the loader has to undo a reference.
+  failure path in the loader has to undo a reference. Dropping a reference that
+  is not there panics instead of being skipped.
 * `.bss` is cleared in the boot stub, not in `call_global_ctors`. The stack, the
   page tables and the allocator bitmap live in `.bss` and are already in use by
   then. The stub clears the direction flag first, because multiboot leaves it
@@ -169,8 +170,9 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * Device memory is reached through `mm::map_device`, which returns an uncached
   window in the vmalloc area. A driver never touches a page table and never
   assumes a physical address is mapped.
-* The heap reserves 64 MiB of virtual space and commits 2 MiB at a time. It
-  grows when an allocation does not fit and never shrinks.
+* The heap reserves 64 MiB of virtual space and commits 2 MiB at a time. It is
+  first fit with block merging, grows when an allocation does not fit and never
+  shrinks.
 * The page allocator manages the first GiB only, because that is all the direct
   map covers. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
   whatever sits after `__kernel_end`.
@@ -180,7 +182,6 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * Global `operator new` and `delete` are wired to `kmalloc` and `kfree` and are
   `noexcept`. A `new` expression returns `nullptr` when the heap is exhausted,
   and using it before `heap_init` is a null dereference.
-* The heap is 512 pages, 2 MiB, first fit with block merging. It never grows.
 * Fixed limits: 64 modules, 4 consoles, 8 keyboard subscribers, 16 IRQ lines.
 * Interrupt vectors 0 to 31 panic, 32 to 47 dispatch to IRQ handlers and send an
   end of interrupt, 0x40 is the local APIC timer, 0xFF is the spurious vector
@@ -209,6 +210,9 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   init again.
 * `pr_*` before `serial_init` writes into a console list with zero entries, so
   the output disappears silently.
+* `printk` and `panic` are checked by the compiler as printf formats, but
+  `vprintk` implements only `%c %s %d %i %u %x %X %p` with the `l` length. A
+  width or a flag compiles cleanly and prints wrong.
 * Anything called from an interrupt handler must not use `kmalloc`.
 * Splitting a 2 MiB mapping has to carry the old flags across, or the fresh
   table silently drops `NX`.

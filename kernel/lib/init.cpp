@@ -2,6 +2,7 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/mm.hpp>
+#include <eris/panic.hpp>
 
 using Constructor = void (*)();
 
@@ -18,8 +19,7 @@ void call_global_ctors()
 
 void __cxa_pure_virtual()
 {
-    for (;;)
-        asm volatile("hlt");
+    eris::panic("pure virtual function called");
 }
 
 int __cxa_atexit(void (*)(void*), void*, void*)

@@ -59,10 +59,10 @@ void draw_input()
 void push_line(const char* text)
 {
     const usize first_line = window_y + 2;
-    const usize last_line = window_y + window_h - 4;
+    const usize end_line = window_y + window_h - 3;
 
-    if (line_cursor > last_line - first_line) {
-        for (usize y = first_line; y < last_line; ++y) {
+    if (first_line + line_cursor == end_line) {
+        for (usize y = first_line; y < end_line; ++y) {
             for (usize x = window_x + 2; x < window_x + window_w - 2; ++x)
                 vga_put_cell(x, y, ' ', color_window);
         }

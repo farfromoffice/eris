@@ -38,7 +38,7 @@ void print_signed(i64 value)
 {
     if (value < 0) {
         console_put('-');
-        print_unsigned(static_cast<u64>(-value), 10, false);
+        print_unsigned(0 - static_cast<u64>(value), 10, false);
         return;
     }
     print_unsigned(static_cast<u64>(value), 10, false);

@@ -8,7 +8,8 @@
 
 namespace eris {
 
-ERIS_NORETURN void panic(const char* fmt, ...);
-ERIS_NORETURN void panic_with_registers(const arch::Registers& regs, const char* fmt, ...);
+ERIS_NORETURN ERIS_PRINTF(1, 2) void panic(const char* fmt, ...);
+ERIS_NORETURN ERIS_PRINTF(2, 3) void panic_with_registers(const arch::Registers& regs,
+                                                          const char* fmt, ...);
 
 } // namespace eris

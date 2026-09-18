@@ -3,14 +3,15 @@
 
 #pragma once
 
+#include <eris/compiler.hpp>
 #include <eris/types.hpp>
 
 namespace eris {
 
 enum class LogLevel : u8 { Debug, Info, Warn, Error };
 
-void printk(LogLevel level, const char* fmt, ...);
-void vprintk(const char* fmt, __builtin_va_list args);
+ERIS_PRINTF(2, 3) void printk(LogLevel level, const char* fmt, ...);
+ERIS_PRINTF(1, 0) void vprintk(const char* fmt, __builtin_va_list args);
 
 }
 

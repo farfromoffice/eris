@@ -2,6 +2,7 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/module.hpp>
+#include <eris/panic.hpp>
 #include <eris/printk.hpp>
 #include <eris/string.hpp>
 
@@ -121,8 +122,9 @@ void release_dependencies(const Module& module)
 {
     for (usize i = 0; i < module.info->dep_count; ++i) {
         Module* dep = find(module.info->deps[i]);
-        if (dep != nullptr && dep->refcount > 0)
-            --dep->refcount;
+        if (dep->refcount == 0)
+            panic("module %s: no reference left to drop on %s", module.info->name, dep->info->name);
+        --dep->refcount;
     }
 }
 
