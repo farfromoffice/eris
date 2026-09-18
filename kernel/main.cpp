@@ -8,6 +8,7 @@
 #include <eris/export.hpp>
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
+#include <eris/acpi.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
 #include <eris/module.hpp>
@@ -16,6 +17,7 @@
 #include <eris/string.hpp>
 #include <eris/serial.hpp>
 #include <eris/time.hpp>
+#include <eris/work.hpp>
 #include <eris/version.hpp>
 
 extern "C" void kernel_main(eris::u32 multiboot_magic, eris::u64 multiboot_info);
@@ -124,6 +126,43 @@ void heap_selftest()
             static_cast<u64>(heap_used() / 1024));
 }
 
+constinit volatile bool timer_fired = false;
+constinit volatile u64 timer_fired_at = 0;
+
+void mark_fired(void*)
+{
+    timer_fired = true;
+    timer_fired_at = monotonic_ns();
+}
+
+// Checks that the clock moves at the rate it claims and that a deadline lands
+// where it was asked to.
+void time_selftest()
+{
+    const u64 start = monotonic_ns();
+    mdelay(200);
+    const u64 elapsed = monotonic_ns() - start;
+
+    pr_info("time selftest: 200 ms delay measured %lu us on the %s clock\n",
+            (elapsed + 500) / 1000,
+            clock_source());
+
+    const u64 armed = monotonic_ns();
+    timer_after(50000000, mark_fired, nullptr);
+
+    while (!timer_fired && monotonic_ns() - armed < 500000000)
+        arch::hlt();
+
+    if (!timer_fired) {
+        pr_err("time selftest: the 50 ms timer never fired\n");
+        return;
+    }
+
+    pr_info("time selftest: 50 ms timer fired after %lu us, jiffies at %lu\n",
+            (timer_fired_at - armed + 500) / 1000,
+            ticks());
+}
+
 void report_memory()
 {
     const auto free = mm::free_pages_count();
@@ -166,18 +205,24 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     arch::gdt_init();
     arch::tss_init();
     arch::idt_init();
-    arch::pic_init();
 
     mm::page_alloc_init(multiboot_magic, multiboot_info);
     mm::paging_init();
     mm::heap_init();
+
+    acpi::init();
+    arch::irq_init();
+    clock_init();
     report_memory();
 
     if (cmdline_has("mmtest"))
         heap_selftest();
 
-    timer_init(100);
+    timers_init();
     arch::sti();
+
+    if (cmdline_has("timetest"))
+        time_selftest();
 
     module_init_builtin();
     report_modules();
@@ -185,8 +230,10 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     if (const char* kind = cmdline_value("fault"); kind != nullptr)
         inject_fault(kind);
 
-    for (;;)
+    for (;;) {
+        work_run_pending();
         arch::hlt();
+    }
 }
 
 } // namespace eris
