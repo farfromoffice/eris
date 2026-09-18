@@ -2,6 +2,8 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/cpu.hpp>
+#include <eris/paging.hpp>
+#include <eris/printk.hpp>
 #include <eris/string.hpp>
 
 extern "C" eris::u8 boot_stack_guard[];
@@ -20,10 +22,6 @@ struct alignas(page_size) GuardedStack {
 constexpr u8 guard_pattern = 0xA5;
 constexpr usize exception_stacks = 3;
 
-// Only the end nearest the stack is checked on the hot path, because that is
-// the part an overflow reaches first.
-constexpr usize sentinel_size = 64;
-
 constinit GuardedStack stacks[exception_stacks]{};
 
 constexpr const char* stack_names[exception_stacks + 1] = {
@@ -38,18 +36,13 @@ u8* guard_of(usize index)
     return index < exception_stacks ? stacks[index].guard : boot_stack_guard;
 }
 
-bool sentinel_intact(usize index)
-{
-    const u8* sentinel = guard_of(index) + page_size - sentinel_size;
-    for (usize i = 0; i < sentinel_size; ++i) {
-        if (sentinel[i] != guard_pattern)
-            return false;
-    }
-    return true;
-}
+constinit bool guards_unmapped = false;
 
 bool guard_intact(usize index)
 {
+    if (guards_unmapped)
+        return true;
+
     const u8* guard = guard_of(index);
     for (usize i = 0; i < page_size; ++i) {
         if (guard[i] != guard_pattern)
@@ -84,13 +77,28 @@ bool stack_guards_intact()
     return true;
 }
 
-bool stack_sentinels_intact()
+// Once the page tables are ours the guards stop being a pattern to check and
+// become holes, so an overflow faults on the instruction that caused it.
+void unmap_stack_guards()
 {
     for (usize i = 0; i <= exception_stacks; ++i) {
-        if (!sentinel_intact(i))
-            return false;
+        const auto address = reinterpret_cast<virt_addr>(guard_of(i));
+        mm::AddressSpace::kernel().unmap(address, page_size);
     }
-    return true;
+
+    guards_unmapped = true;
+}
+
+const char* guard_page_owner(virt_addr address)
+{
+    const virt_addr page = address & ~(virt_addr{page_size} - 1);
+
+    for (usize i = 0; i <= exception_stacks; ++i) {
+        if (reinterpret_cast<virt_addr>(guard_of(i)) == page)
+            return stack_names[i];
+    }
+
+    return nullptr;
 }
 
 const char* overflowed_stack_name()

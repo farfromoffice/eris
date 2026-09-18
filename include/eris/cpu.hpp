@@ -20,8 +20,10 @@ void tss_set_kernel_stack(virt_addr stack_top);
 
 virt_addr exception_stack_top(u8 ist_index);
 
+void unmap_stack_guards();
+const char* guard_page_owner(virt_addr address);
+
 bool stack_guards_intact();
-bool stack_sentinels_intact();
 const char* overflowed_stack_name();
 
 } // namespace eris::arch

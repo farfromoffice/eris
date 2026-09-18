@@ -2,6 +2,7 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/cpu.hpp>
+#include <eris/paging.hpp>
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/compiler.hpp>
@@ -87,13 +88,37 @@ void irq_register(u8 irq, IrqHandler handler)
         irq_handlers[irq] = handler;
 }
 
-void report_page_fault(const Registers& regs)
+u64 fault_address()
 {
     u64 address;
     asm volatile("mov %%cr2, %0" : "=r"(address));
+    return address;
+}
 
-    pr_err("page fault at %lx: %s, %s, %s%s%s\n",
+// A stack that runs into its guard page faults, and the fault frame cannot be
+// pushed either, so the report has to come from the double fault handler.
+void report_double_fault(const Registers& regs)
+{
+    const char* stack = guard_page_owner(fault_address());
+    if (stack == nullptr)
+        stack = guard_page_owner(regs.rsp);
+
+    if (stack != nullptr)
+        pr_err("the %s stack overflowed into its guard page, rsp %lx\n", stack, regs.rsp);
+}
+
+void report_page_fault(const Registers& regs)
+{
+    const u64 address = fault_address();
+
+    if (const char* stack = guard_page_owner(address); stack != nullptr) {
+        pr_err("the %s stack overflowed into its guard page at %lx\n", stack, address);
+        return;
+    }
+
+    pr_err("page fault at %lx in %s: %s, %s, %s%s%s\n",
            address,
+           mm::region_name(address),
            (regs.error_code & 1) ? "protection violation" : "page not present",
            (regs.error_code & 2) ? "write" : "read",
            (regs.error_code & 4) ? "user mode" : "kernel mode",
@@ -104,6 +129,8 @@ void report_page_fault(const Registers& regs)
 extern "C" void isr_dispatch(Registers& regs)
 {
     if (regs.vector < 32) {
+        if (regs.vector == 8)
+            report_double_fault(regs);
         if (regs.vector == 14)
             report_page_fault(regs);
 
