@@ -7,13 +7,21 @@ OUTPUT_FORMAT(elf64-x86-64)
 SECTIONS
 {
     . = 1M;
+    __kernel_start = .;
 
     .boot ALIGN(4K) : { KEEP(*(.multiboot)) }
 
-    .text ALIGN(4K) : { *(.text .text.*) }
+    .text ALIGN(4K) :
+    {
+        __text_start = .;
+        *(.text .text.*)
+        . = ALIGN(4K);
+        __text_end = .;
+    }
 
     .rodata ALIGN(4K) :
     {
+        __rodata_start = .;
         *(.rodata .rodata.*)
 
         . = ALIGN(8);
@@ -26,10 +34,14 @@ SECTIONS
         KEEP(*(.init_array .init_array.*))
         KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
         __init_array_end = .;
+
+        . = ALIGN(4K);
+        __rodata_end = .;
     }
 
     .data ALIGN(4K) :
     {
+        __data_start = .;
         *(.data .data.*)
 
         . = ALIGN(8);
@@ -43,9 +55,11 @@ SECTIONS
         __bss_start = .;
         *(COMMON)
         *(.bss .bss.*)
+        . = ALIGN(4K);
         __bss_end = .;
     }
 
+    __data_end = .;
     __kernel_end = .;
 
     /DISCARD/ : { *(.eh_frame) *(.comment) *(.note.*) }
