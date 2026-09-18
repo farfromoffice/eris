@@ -84,3 +84,5 @@ isr_stub_table:
     dq isr_stub_ %+ vec
     %assign vec vec + 1
 %endrep
+
+section .note.GNU-stack progbits noalloc noexec nowrite align=1

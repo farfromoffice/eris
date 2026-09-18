@@ -1,6 +1,8 @@
 ; SPDX-License-Identifier: GPL-2.0-only
 ; Copyright (c) 2026 farfromoffice
 
+default abs
+
 MB_MAGIC    equ 0x1BADB002
 MB_FLAGS    equ 0x00000003
 MB_CHECKSUM equ -(MB_MAGIC + MB_FLAGS)
@@ -138,3 +140,5 @@ long_start:
     cli
     hlt
     jmp .halt
+
+section .note.GNU-stack progbits noalloc noexec nowrite align=1
