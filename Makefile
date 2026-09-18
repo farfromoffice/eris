@@ -16,7 +16,7 @@ CXXFLAGS := -std=c++23 -O2 -ffreestanding -fno-exceptions -fno-rtti \
             -fno-threadsafe-statics -fno-stack-protector -fno-pic \
             -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
             -Wall -Wextra -Werror -Wno-unused-parameter \
-            -fno-use-cxa-atexit -MMD -MP $(INCLUDES)
+            -fno-omit-frame-pointer -fno-use-cxa-atexit -MMD -MP $(INCLUDES)
 
 ASMFLAGS := -f elf64
 LDFLAGS  := -n -nostdlib --no-warn-rwx-segments -T linker/kernel.ld
@@ -31,9 +31,20 @@ DEPS := $(patsubst %.cpp,build/%.d,$(CXX_SRCS))
 
 all: $(KERNEL) $(KERNEL32)
 
-$(KERNEL): $(OBJS) linker/kernel.ld
+# Two link passes: the first one exists so the symbol table can be generated
+# from it, the second one carries that table. The table is regenerated from the
+# second pass because adding it moves every address after it.
+$(KERNEL): $(OBJS) linker/kernel.ld scripts/gen-ksyms.sh
 	@mkdir -p $(dir $@)
-	$(LD) $(LDFLAGS) -o $@ $(OBJS)
+	./scripts/gen-ksyms.sh > build/ksyms.cpp
+	$(CXX) $(CXXFLAGS) -c build/ksyms.cpp -o build/ksyms.o
+	$(LD) $(LDFLAGS) -o build/eris.pass1.elf $(OBJS) build/ksyms.o
+	./scripts/gen-ksyms.sh build/eris.pass1.elf > build/ksyms.cpp
+	$(CXX) $(CXXFLAGS) -c build/ksyms.cpp -o build/ksyms.o
+	$(LD) $(LDFLAGS) -o build/eris.pass2.elf $(OBJS) build/ksyms.o
+	./scripts/gen-ksyms.sh build/eris.pass2.elf > build/ksyms.cpp
+	$(CXX) $(CXXFLAGS) -c build/ksyms.cpp -o build/ksyms.o
+	$(LD) $(LDFLAGS) -o $@ $(OBJS) build/ksyms.o
 
 $(KERNEL32): $(KERNEL)
 	$(OBJCOPY) -O elf32-i386 $< $@
