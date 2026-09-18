@@ -85,7 +85,7 @@ void heap_init()
 
 void* kmalloc(usize size)
 {
-    if (size == 0 || head == nullptr)
+    if (size == 0 || size > capacity)
         return nullptr;
 
     const usize wanted = align_up(size);

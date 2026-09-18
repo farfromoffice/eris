@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
-#include <eris/types.hpp>
+#include <eris/mm.hpp>
 
 using Constructor = void (*)();
 
@@ -31,9 +31,10 @@ void* __dso_handle = nullptr;
 
 }
 
-void* operator new(eris::usize) noexcept { return nullptr; }
-void* operator new[](eris::usize) noexcept { return nullptr; }
-void operator delete(void*) noexcept {}
-void operator delete[](void*) noexcept {}
-void operator delete(void*, eris::usize) noexcept {}
-void operator delete[](void*, eris::usize) noexcept {}
+// noexcept: with -fno-exceptions, new expressions must check for nullptr.
+void* operator new(eris::usize size) noexcept { return eris::kmalloc(size); }
+void* operator new[](eris::usize size) noexcept { return eris::kmalloc(size); }
+void operator delete(void* ptr) noexcept { eris::kfree(ptr); }
+void operator delete[](void* ptr) noexcept { eris::kfree(ptr); }
+void operator delete(void* ptr, eris::usize) noexcept { eris::kfree(ptr); }
+void operator delete[](void* ptr, eris::usize) noexcept { eris::kfree(ptr); }

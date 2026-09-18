@@ -25,6 +25,13 @@ struct ERIS_PACKED MultibootInfo {
     u32 mmap_addr;
 };
 
+struct ERIS_PACKED MultibootModule {
+    u32 mod_start;
+    u32 mod_end;
+    u32 string;
+    u32 reserved;
+};
+
 struct ERIS_PACKED MultibootMmapEntry {
     u32 size;
     u64 addr;
@@ -33,11 +40,14 @@ struct ERIS_PACKED MultibootMmapEntry {
 };
 
 constexpr u32 multiboot_bootloader_magic = 0x2BADB002;
+constexpr u32 multiboot_flag_cmdline = 1u << 2;
+constexpr u32 multiboot_flag_mods = 1u << 3;
+constexpr u32 multiboot_flag_mmap = 1u << 6;
 constexpr u32 mmap_type_available = 1;
 constexpr phys_addr managed_limit = 1ULL << 30;
+constexpr usize managed_pages = managed_limit / page_size;
 
-constinit u8* bitmap = nullptr;
-constinit usize bitmap_pages = 0;
+constinit u8 bitmap[managed_pages / 8]{};
 constinit usize used_pages = 0;
 
 bool test_bit(usize index)
@@ -57,7 +67,7 @@ void clear_bit(usize index)
 
 void mark_used(usize index)
 {
-    if (index < bitmap_pages && !test_bit(index)) {
+    if (index < managed_pages && !test_bit(index)) {
         set_bit(index);
         ++used_pages;
     }
@@ -75,10 +85,39 @@ void mark_range_free(phys_addr start, phys_addr end)
 {
     const usize first = (start + page_size - 1) / page_size;
     const usize last = end / page_size;
-    for (usize i = first; i < last && i < bitmap_pages; ++i) {
+    for (usize i = first; i < last && i < managed_pages; ++i) {
         if (test_bit(i)) {
             clear_bit(i);
             --used_pages;
+        }
+    }
+}
+
+void reserve_string(phys_addr address)
+{
+    const auto* s = reinterpret_cast<const char*>(address);
+    mark_range_used(address, address + strlen(s) + 1);
+}
+
+// Keep everything the bootloader handed us out of the allocator. The
+// command line and modules stay intact for whoever consumes them later.
+void reserve_boot_data(phys_addr info_address, const MultibootInfo& info)
+{
+    mark_range_used(info_address, info_address + sizeof(info));
+    mark_range_used(info.mmap_addr, phys_addr{info.mmap_addr} + info.mmap_length);
+
+    if (info.flags & multiboot_flag_cmdline)
+        reserve_string(info.cmdline);
+
+    if (info.flags & multiboot_flag_mods) {
+        const auto* mods = reinterpret_cast<const MultibootModule*>(phys_addr{info.mods_addr});
+        mark_range_used(info.mods_addr,
+                        phys_addr{info.mods_addr} + info.mods_count * sizeof(*mods));
+
+        for (u32 i = 0; i < info.mods_count; ++i) {
+            mark_range_used(mods[i].mod_start, mods[i].mod_end);
+            if (mods[i].string != 0)
+                reserve_string(mods[i].string);
         }
     }
 }
@@ -91,16 +130,11 @@ void page_alloc_init(u32 multiboot_magic, u64 multiboot_info)
         panic("not booted by a multiboot loader (magic=%x)", multiboot_magic);
 
     const auto* info = reinterpret_cast<const MultibootInfo*>(multiboot_info);
-    if ((info->flags & (1u << 6)) == 0)
+    if ((info->flags & multiboot_flag_mmap) == 0)
         panic("bootloader gave us no memory map");
 
-    bitmap_pages = managed_limit / page_size;
-    bitmap = reinterpret_cast<u8*>((reinterpret_cast<u64>(__kernel_end) + page_size - 1)
-                                   & ~(static_cast<u64>(page_size) - 1));
-
-    const usize bitmap_bytes = bitmap_pages / 8;
-    memset(bitmap, 0xFF, bitmap_bytes);
-    used_pages = bitmap_pages;
+    memset(bitmap, 0xFF, sizeof(bitmap));
+    used_pages = managed_pages;
 
     const auto mmap_start = static_cast<u64>(info->mmap_addr);
     const auto mmap_end = mmap_start + info->mmap_length;
@@ -117,7 +151,8 @@ void page_alloc_init(u32 multiboot_magic, u64 multiboot_info)
     }
 
     mark_range_used(0, 1 << 20);
-    mark_range_used(1 << 20, reinterpret_cast<u64>(bitmap) + bitmap_bytes);
+    mark_range_used(1 << 20, reinterpret_cast<u64>(__kernel_end));
+    reserve_boot_data(multiboot_info, *info);
 }
 
 phys_addr alloc_page()
@@ -131,7 +166,7 @@ phys_addr alloc_pages(usize count)
         return 0;
 
     usize run = 0;
-    for (usize i = 0; i < bitmap_pages; ++i) {
+    for (usize i = 0; i < managed_pages; ++i) {
         if (test_bit(i)) {
             run = 0;
             continue;
@@ -158,7 +193,7 @@ void free_page(phys_addr page)
 void free_pages(phys_addr page, usize count)
 {
     const usize first = page / page_size;
-    for (usize i = first; i < first + count && i < bitmap_pages; ++i) {
+    for (usize i = first; i < first + count && i < managed_pages; ++i) {
         if (test_bit(i)) {
             clear_bit(i);
             --used_pages;
@@ -168,12 +203,12 @@ void free_pages(phys_addr page, usize count)
 
 usize total_pages()
 {
-    return bitmap_pages;
+    return managed_pages;
 }
 
 usize free_pages_count()
 {
-    return bitmap_pages - used_pages;
+    return managed_pages - used_pages;
 }
 
 } // namespace eris::mm

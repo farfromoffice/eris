@@ -47,6 +47,8 @@ extern __bss_end
 
 _start:
     cli
+    ; Multiboot leaves EFLAGS.DF undefined; rep stosb and the C++ ABI need it clear.
+    cld
     mov [mb_magic_saved], eax
     mov [mb_info_saved], ebx
 
