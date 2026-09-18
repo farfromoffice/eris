@@ -21,10 +21,12 @@ make clean
 ./scripts/boot-test.sh    # build must exist, boots QEMU and checks the log
 ./scripts/check-spdx.sh   # SPDX header audit
 ./scripts/check-modules.sh
+./scripts/faultinject.sh  # drives the panic path on purpose
 ```
 
 A change is not finished until `make` is clean and `./scripts/boot-test.sh`
-passes. The build runs with `-Wall -Wextra -Werror`, so a warning is a failure.
+passes. Anything touching the fault, panic or interrupt paths also runs
+`./scripts/faultinject.sh`. The build runs with `-Wall -Wextra -Werror`, so a warning is a failure.
 
 ## What this kernel will never have
 

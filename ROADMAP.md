@@ -16,7 +16,7 @@ here.
 3. [How to read the boxes](#how-to-read-the-boxes)
 4. [Non goals](#non-goals)
 5. [Gap table](#gap-table)
-6. [Phase 1: survive a fault](#phase-1-survive-a-fault)
+6. [Phase 1: survive a fault](#phase-1-survive-a-fault) (done)
 7. [Phase 2: virtual memory](#phase-2-virtual-memory)
 8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time)
 9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu)
@@ -43,6 +43,10 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga`,
 `keyboard`, `desktop`.
+
+A fault is survivable as of phase 1: double fault, NMI and machine check run on
+their own stacks, the guard pages catch an overflow, and a panic prints the
+registers, the control registers, the faulting bytes and a symbolised backtrace.
 
 Everything runs in ring 0 on one CPU, with interrupt masking as the only form of
 mutual exclusion. There is no address space management, no scheduler, no
@@ -120,7 +124,7 @@ either.
 
 | Area | eris today | Reference kernels | Phase |
 | --- | --- | --- | --- |
-| Fault survival | Every exception panics, no IST, no guard pages, no backtrace | Separate stacks for double fault and NMI, symbolised backtrace | 1 |
+| Fault survival | IST stacks, guard pages, symbolised backtrace, fault injection | Separate stacks for double fault and NMI, symbolised backtrace | done |
 | Virtual memory | Identity map of the first GiB, no page table API | Per address space page tables, W^X, guard pages, MMIO windows | 2 |
 | Interrupt controller | Legacy PIC, PIT tick only | ACPI tables, local APIC, IO APIC, MSI, HPET or TSC deadline | 3 |
 | Concurrency | Interrupt masking, plain integer refcounts | Spinlocks, IRQ safe locks, atomics, per CPU areas | 4 |
@@ -137,41 +141,46 @@ either.
 | Installation | Boots from a build tree only | Live image, installer, module selection, on disk system | 14 |
 | Testing | Boot smoke test in CI | In kernel test suite, fault injection, recorded boot diffs | ongoing |
 
-## Phase 1: survive a fault
+## ~~Phase 1: survive a fault~~
 
 **Goal.** The kernel reports its own death instead of rebooting silently.
-
-**Why now.** A stack overflow inside an interrupt handler triple faults today,
-and the wire stays empty. Every later phase is debugged through this machinery,
-so it comes first and it is cheap.
+Landed on main, ships in 0.2, Sedna.
 
 **Work**
 
-- [ ] `kernel/cpu/tss.cpp`, `include/eris/cpu.hpp`: a `Tss` per CPU, `rsp0` for the
-  future ring 0 entry, `ist[1..3]` filled with dedicated stacks, a TSS descriptor
-  appended to the GDT and loaded with `ltr`.
-- [ ] `kernel/cpu/idt.cpp`: IST index 1 for double fault, 2 for NMI, 3 for machine
-  check, so a broken kernel stack still lands somewhere valid.
-- [ ] `kernel/cpu/stacks.cpp`: kernel stacks allocated with a guard page below them,
-  unmapped once phase 2 lands and poisoned before that.
-- [ ] `kernel/lib/backtrace.cpp`: walk `rbp`, print `rip` values, resolve them
-  through a symbol table generated at link time by `scripts/gen-symtab.sh` and
-  embedded in `.eris_ksyms`. Compile with `-fno-omit-frame-pointer`.
-- [ ] `kernel/lib/panic.cpp`: dump the register frame, `cr0`, `cr2`, `cr3`, `cr4`,
-  the faulting instruction bytes, the backtrace, and the loaded module list, then
-  halt every CPU once phase 4 gives us IPIs.
-- [ ] `kernel/cpu/idt.cpp`: decode the page fault error code into words, present,
-  write, user, reserved, instruction fetch, rather than printing a bare number.
-- [ ] `scripts/faultinject.sh`: boot with a kernel command line switch that triggers
-  a chosen fault, so the panic path itself is tested.
+- [x] ~~`kernel/cpu/tss.cpp`, `include/eris/cpu.hpp`: a `Tss` with `rsp0` kept for
+  the future ring 0 entry, `ist[1..3]` pointing at dedicated stacks, and a TSS
+  descriptor in the GDT loaded with `ltr`.~~
+- [x] ~~`kernel/cpu/idt.cpp`: IST index 1 for double fault, 2 for NMI, 3 for machine
+  check, so a broken kernel stack still lands somewhere valid.~~
+- [x] ~~`kernel/cpu/stacks.cpp`: a guard page below the boot stack and below every
+  exception stack, poisoned and checked until phase 2 can unmap it. The page
+  tables moved above the stack so an overflow reaches the guard first.~~
+- [x] ~~`kernel/lib/backtrace.cpp`: walks `rbp`, prints each `rip` with the nearest
+  symbol, resolved through the table `scripts/gen-ksyms.sh` generates from the
+  first link pass. Built with `-fno-omit-frame-pointer`.~~
+- [x] ~~`kernel/lib/panic.cpp`: register frame, `cr0`, `cr2`, `cr3`, `cr4`, the
+  instruction bytes at the fault, the guard page verdict, the backtrace and the
+  module list. Halting every CPU waits for the IPIs in phase 4.~~
+- [x] ~~`kernel/cpu/idt.cpp`: page fault error codes decoded into words rather than
+  printed as a number.~~
+- [x] ~~`kernel/cmdline.cpp`: multiboot command line split into words, which is
+  what the fault switch reads.~~
+- [x] ~~`scripts/faultinject.sh`: drives six faults through the panic path and
+  checks each one reported a panic and a backtrace. `panic_exit` makes QEMU
+  leave instead of idling, so the whole suite takes under a second.~~
+- [x] ~~`.github/workflows/fault-injection.yml`: the suite runs on every push.~~
 
-**Done when.** A deliberate stack overflow, a null write and an invalid opcode
-each print a panic with the fault decoded and a symbolised backtrace, and QEMU
-never reboots.
+**Done when.** A deliberate stack overflow, an unmapped write and an invalid
+opcode each print a panic with the fault decoded and a symbolised backtrace, and
+QEMU never reboots. Done: the suite covers `unmapped`, `opcode`, `divide`,
+`doublefault`, `stack` and `panic`.
 
 **Traps.** The IST stacks are not reentrant, so a double fault inside a double
-fault is still fatal. Frame pointer walking lies at `-O2` in any function that
-dropped the frame pointer, so build with it pinned or accept gaps.
+fault is still fatal. A write to address zero is not a fault yet, the identity
+map covers it, which is why the injected page fault targets an unmapped address
+instead. Recursion written to overflow the stack gets rewritten into a loop by
+the optimiser unless the frame address is handed to it as an opaque value.
 
 ## Phase 2: virtual memory
 
@@ -1208,7 +1217,7 @@ Not a phase, work that grows with each of the above.
 ## Order and dependencies
 
 ```
-1  fault survival
+1  fault survival ......... done
 2  virtual memory ......... 1 makes its failures debuggable
 3  apic and time .......... needs 2 for MMIO mapping
 4  locks and SMP .......... needs 3
@@ -1239,7 +1248,7 @@ tag and never reused.
 | Version | Code name | Contents | State |
 | --- | --- | --- | --- |
 | 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, three built in modules | released |
-| 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, higher half, W^X, real page table API | planned |
+| 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, higher half, W^X, real page table API | phase 1 landed |
 | 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | planned |
 | 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | planned |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | planned |

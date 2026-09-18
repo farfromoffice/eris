@@ -8,6 +8,7 @@
       "Bash(./scripts/check-spdx.sh)",
       "Bash(./scripts/check-modules.sh)",
       "Bash(./scripts/kernel-size.sh)",
+      "Bash(./scripts/faultinject.sh:*)",
       "Bash(./scripts/new-module.sh:*)",
       "Bash(nm:*)",
       "Bash(readelf:*)",

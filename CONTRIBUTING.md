@@ -29,6 +29,7 @@ make
 ./scripts/boot-test.sh
 ./scripts/check-modules.sh
 ./scripts/check-spdx.sh
+./scripts/faultinject.sh
 ```
 
 The build runs with `-Wall -Wextra -Werror`, so a warning fails it. `boot-test.sh`

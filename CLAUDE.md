@@ -65,13 +65,14 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 `start_kernel` in `kernel/main.cpp` runs in this order and the order matters:
 
 1. `serial_init` so panics have somewhere to go, then the banner from
-   `eris/version.hpp`
-2. `arch::gdt_init`, `arch::idt_init`, `arch::pic_init`
+   `eris/version.hpp`, then `cmdline_init`
+2. `arch::gdt_init`, `arch::tss_init`, `arch::idt_init`, `arch::pic_init`
 3. `mm::page_alloc_init` with the multiboot magic and info pointer
 4. `mm::heap_init`, which takes 512 contiguous pages
 5. `timer_init(100)` then `arch::sti`
 6. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
-7. `report_modules`, then an idle `hlt` loop
+7. `report_modules`, then the fault injection switch if the command line asked
+   for one, then an idle `hlt` loop
 
 Nothing before step 3 may allocate. Nothing before step 1 may print.
 
@@ -81,6 +82,11 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | --- | --- |
 | `eris/types.hpp` | `u8`..`u64`, `usize`, `phys_addr`, `page_size` |
 | `eris/version.hpp` | Version numbers, code name, arch and language strings |
+| `eris/cpu.hpp` | TSS, IST indices, exception stacks, guard page checks |
+| `eris/backtrace.hpp` | `backtrace`, `backtrace_from`, `print_symbol` |
+| `eris/ksyms.hpp` | `ksyms_lookup` for turning an address into a name |
+| `eris/cmdline.hpp` | `cmdline_has`, `cmdline_value`, `cmdline_raw` |
+| `eris/multiboot.hpp` | Boot information structures and flags |
 | `eris/compiler.hpp` | `ERIS_PACKED`, `ERIS_ALIGNED`, `ERIS_NORETURN` |
 | `eris/console.hpp` | `Console` interface, register and unregister, `console_write` |
 | `eris/printk.hpp` | `pr_debug` `pr_info` `pr_warn` `pr_err`, `vprintk` |
@@ -112,6 +118,20 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 
 * `eris::arch::Registers` field order mirrors the pushes in `kernel/cpu/isr.asm`.
   Change both or neither.
+* Vectors 2, 8 and 18 run on IST stacks 2, 1 and 3, because they are the faults
+  that can arrive when the kernel stack is already broken. Every other vector
+  uses the interrupted stack.
+* The boot stack and each exception stack have a guard page below them, filled
+  with `0xA5`. Nothing unmaps them yet, so an overflow is detected rather than
+  trapped: the timer tick checks the sentinel window and `panic` checks the full
+  page. The page tables sit above the stack so an overflow hits the guard first.
+* The image is linked three times. The first pass exists so `scripts/gen-ksyms.sh`
+  can read its symbols, the second carries that table, and the third regenerates
+  it because adding the table moved every address after it. The kernel builds
+  with `-fno-omit-frame-pointer` for the same reason.
+* `panic` and `panic_with_registers` never return. With `panic_exit` on the
+  command line they leave QEMU through the debug exit port instead of halting,
+  which is how the fault suite finishes in under a second.
 * Module descriptors live in `.eris_modules` inside `.rodata`, bracketed by
   `__eris_modules_start` and `__eris_modules_end`. They have internal linkage, so
   the section needs `KEEP` in the linker script.
@@ -153,6 +173,10 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * `pr_*` before `serial_init` writes into a console list with zero entries, so
   the output disappears silently.
 * Anything called from an interrupt handler must not use `kmalloc`.
+* A write to address zero is not a fault: the identity map covers the first page.
+  Use an address above the mapped gigabyte to provoke a page fault.
+* Recursion written to overflow the stack gets turned into a loop by the
+  optimiser unless the frame address is passed to an opaque asm statement.
 
 ## Verification
 
@@ -163,8 +187,15 @@ make
 ./scripts/check-modules.sh
 ```
 
+```
+./scripts/faultinject.sh
+```
+
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning
-and on an empty serial log. Paste its output in the pull request.
+and on an empty serial log. `faultinject.sh` does the opposite: it drives
+`unmapped`, `opcode`, `divide`, `doublefault`, `stack` and `panic` through the
+panic path and fails if any of them does not report a panic with a backtrace.
+Paste both in the pull request.
 
 ## License
 

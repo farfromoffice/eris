@@ -16,6 +16,18 @@ description: Track down a panic, hang, triple fault or wrong interrupt behaviour
 | IRQ never fires | PIC mask, missing `irq_register`, missing end of interrupt |
 | Garbage on screen | VGA cell writes, or a module that fights over the console |
 
+## Drive the panic path first
+
+```
+./scripts/faultinject.sh              # all six kinds
+./scripts/faultinject.sh doublefault  # just one
+```
+
+Booting with `fault=<kind>` on the command line triggers `unmapped`, `opcode`,
+`divide`, `doublefault`, `stack` or `panic` on purpose. Adding `panic_exit`
+makes the machine leave QEMU once it has halted. If the suite passes, the
+reporting machinery works and what you are chasing is a real bug.
+
 ## QEMU tracing
 
 ```
@@ -49,6 +61,8 @@ you suspect. `info registers` after a fault and `x/16i $rip` usually end it.
 * Touching memory above the first GiB, which is not mapped.
 * A stale object file after the module macro changed. `make clean` and retry.
 * Printing before `serial_init`, which goes nowhere and looks like a hang.
+* A backtrace that stops after one frame, which means the frame pointer was
+  clobbered or the code was built without `-fno-omit-frame-pointer`.
 
 ## Closing out
 
