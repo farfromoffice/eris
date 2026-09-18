@@ -1,13 +1,18 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/cmdline.hpp>
+#include <eris/compiler.hpp>
 #include <eris/console.hpp>
+#include <eris/cpu.hpp>
 #include <eris/export.hpp>
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/mm.hpp>
 #include <eris/module.hpp>
+#include <eris/panic.hpp>
 #include <eris/printk.hpp>
+#include <eris/string.hpp>
 #include <eris/serial.hpp>
 #include <eris/time.hpp>
 #include <eris/version.hpp>
@@ -24,6 +29,62 @@ void print_banner()
            version_name,
            version_arch,
            version_language);
+}
+
+// Recursion the optimiser cannot turn into a loop, so the stack really grows.
+// The warning about it is the point of the function.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winfinite-recursion"
+ERIS_NOINLINE u64 overflow_stack(u64 depth)
+{
+    volatile u8 filler[256];
+    filler[0] = static_cast<u8>(depth);
+
+    // Handing the frame address to the compiler as an opaque value stops it
+    // from rewriting this into a loop that never grows the stack.
+    asm volatile("" : : "r"(&filler[0]) : "memory");
+
+    // The full page, not the sentinel: a frame this size can step over the
+    // sentinel window without writing a byte in it.
+    if (!arch::stack_guards_intact())
+        panic("kernel stack overflowed into its guard page at depth %lu", depth);
+
+    return filler[0] + overflow_stack(depth + 1);
+}
+#pragma GCC diagnostic pop
+
+// Drives the panic path on purpose, so the machinery that reports a fault is
+// tested rather than assumed. Selected with fault=<kind> on the command line.
+void inject_fault(const char* kind)
+{
+    pr_warn("injecting the %s fault\n", kind);
+
+    if (strcmp(kind, "unmapped") == 0) {
+        auto* target = reinterpret_cast<volatile u64*>(0xFFFF800000000000);
+        *target = 1;
+    } else if (strcmp(kind, "opcode") == 0) {
+        asm volatile("ud2");
+    } else if (strcmp(kind, "divide") == 0) {
+        asm volatile("xor %%edx, %%edx\n"
+                     "mov $1, %%eax\n"
+                     "xor %%ecx, %%ecx\n"
+                     "div %%ecx\n"
+                     :
+                     :
+                     : "eax", "ecx", "edx");
+    } else if (strcmp(kind, "doublefault") == 0) {
+        // Point the stack at unmapped memory, then fault. The page fault
+        // cannot be delivered because pushing its frame faults as well, which
+        // is exactly what the double fault stack exists for.
+        asm volatile("mov $0xdeadbe000, %rsp\n"
+                     "push $0\n");
+    } else if (strcmp(kind, "stack") == 0) {
+        overflow_stack(0);
+    } else if (strcmp(kind, "panic") == 0) {
+        panic("fault injection asked for a panic");
+    } else {
+        pr_err("unknown fault kind %s\n", kind);
+    }
 }
 
 void report_memory()
@@ -63,7 +124,10 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     serial_init();
     print_banner();
 
+    cmdline_init(multiboot_magic, multiboot_info);
+
     arch::gdt_init();
+    arch::tss_init();
     arch::idt_init();
     arch::pic_init();
 
@@ -76,6 +140,9 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
 
     module_init_builtin();
     report_modules();
+
+    if (const char* kind = cmdline_value("fault"); kind != nullptr)
+        inject_fault(kind);
 
     for (;;)
         arch::hlt();

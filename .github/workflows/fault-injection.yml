@@ -1,0 +1,33 @@
+name: fault injection
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  panic-path:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Drive every fault into the panic path
+        run: ./scripts/faultinject.sh
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fault-logs
+          path: build/faults
+          retention-days: 7
