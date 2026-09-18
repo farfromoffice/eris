@@ -1,0 +1,20 @@
+---
+Language: Cpp
+BasedOnStyle: WebKit
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+AccessModifierOffset: -4
+AllowShortFunctionsOnASingleLine: Inline
+AlwaysBreakTemplateDeclarations: Yes
+BreakBeforeBraces: WebKit
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+FixNamespaceComments: true
+IncludeBlocks: Preserve
+NamespaceIndentation: None
+PointerAlignment: Left
+SortIncludes: CaseSensitive
+SpaceAfterTemplateKeyword: false

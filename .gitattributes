@@ -1,0 +1,40 @@
+* text=auto eol=lf
+
+*.cpp text diff=cpp
+*.hpp text diff=cpp
+*.asm text
+*.ld text
+*.sh text eol=lf
+*.md text diff=markdown
+*.yml text
+*.json text
+Makefile text
+LICENSE text
+NOTICE text
+MAINTAINERS text
+CREDITS text
+
+*.elf binary
+*.iso binary
+*.o binary
+*.bin binary
+*.img binary
+*.ppm binary
+*.png binary
+
+LICENSE linguist-vendored
+NOTICE linguist-vendored
+.github/** linguist-documentation
+.claude/** linguist-documentation
+.codex/** linguist-documentation
+
+*.asm linguist-language=NASM
+
+build/ export-ignore
+.github/ export-ignore
+.claude/ export-ignore
+.codex/ export-ignore
+.idea/ export-ignore
+.editorconfig export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
