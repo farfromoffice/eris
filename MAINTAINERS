@@ -32,6 +32,7 @@ S:	Maintained
 F:	kernel/cpu/
 F:	include/eris/irq.hpp
 F:	include/eris/io.hpp
+F:	include/eris/apic.hpp
 P:	include/eris/irq.hpp and kernel/cpu/isr.asm share a register frame.
 	Change both or neither.
 T:	./scripts/boot-test.sh
@@ -67,11 +68,20 @@ F:	include/eris/panic.hpp
 F:	include/eris/string.hpp
 F:	include/eris/serial.hpp
 
-TIMER
+CLOCK AND TIMERS
 M:	farfromoffice
 S:	Maintained
-F:	kernel/cpu/timer.cpp
+F:	kernel/time/
 F:	include/eris/time.hpp
+P:	A timer callback runs in interrupt context. Keep it short, allocate
+	nothing, and hand the rest to schedule_work.
+
+ACPI
+M:	farfromoffice
+S:	Maintained
+F:	kernel/acpi/
+F:	include/eris/acpi.hpp
+P:	Tables only. No AML interpreter until something needs shutdown.
 
 VGA MODULE
 M:	farfromoffice

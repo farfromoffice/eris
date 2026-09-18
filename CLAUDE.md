@@ -71,10 +71,12 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 4. `mm::paging_init`, which builds the kernel page tables, applies W^X and turns
    the stack guards into holes
 5. `mm::heap_init`, which reserves virtual space and commits the first 2 MiB
-6. `timer_init(100)` then `arch::sti`
-7. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
-8. `report_modules`, then the fault injection switch if the command line asked
-   for one, then an idle `hlt` loop
+6. `acpi::init`, `arch::irq_init` and `clock_init`, in that order, because the
+   controller and the clock both come out of the tables
+7. `timers_init` then `arch::sti`
+8. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
+9. `report_modules`, then the fault injection switch if the command line asked
+   for one, then an idle loop that drains deferred work and halts
 
 Nothing before step 3 may allocate. Nothing before step 1 may print.
 
@@ -97,10 +99,13 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/paging.hpp` | `AddressSpace`, `PageFlags`, `vmalloc_reserve`, `map_device`, `region_name`, `phys_to_virt` |
 | `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state |
 | `eris/export.hpp` | `ERIS_EXPORT_SYMBOL`, `symbol_lookup` |
-| `eris/irq.hpp` | `Registers`, `irq_register`, mask, unmask, eoi, table init |
+| `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
+| `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
+| `eris/apic.hpp` | Local APIC, IO APIC, the vectors they use |
+| `eris/work.hpp` | `schedule_work`, `work_run_pending` |
 | `eris/io.hpp` | `inb` `outb` `io_wait` `cli` `sti` `hlt` |
 | `eris/serial.hpp` | `serial_init` for the early console |
-| `eris/time.hpp` | `timer_init`, `ticks` |
+| `eris/time.hpp` | `monotonic_ns`, `timer_after`, `timer_every`, `timer_cancel`, `udelay`, `ticks` |
 | `eris/string.hpp` | `memset` `memcpy` `memmove` `memcmp` `strlen` `strcmp` |
 
 ## Modules
@@ -178,7 +183,17 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * The heap is 512 pages, 2 MiB, first fit with block merging. It never grows.
 * Fixed limits: 64 modules, 4 consoles, 8 keyboard subscribers, 16 IRQ lines.
 * Interrupt vectors 0 to 31 panic, 32 to 47 dispatch to IRQ handlers and send an
-  end of interrupt, everything else logs a warning.
+  end of interrupt, 0x40 is the local APIC timer, 0xFF is the spurious vector
+  and is ignored without an end of interrupt, everything else logs a warning.
+* `irq_mask`, `irq_unmask` and `irq_eoi` go to whichever controller `irq_init`
+  settled on. On the APIC path an unmask also programs the redirection entry,
+  and the end of interrupt goes to the local APIC, never to the masked PIC.
+* Time comes from the HPET when the firmware reports one and from a calibrated
+  TSC otherwise. `monotonic_ns` is the only clock; `ticks` is a jiffy counter
+  driven by a periodic timer on top of it.
+* The timer queue programs the hardware for the nearest deadline only. A
+  callback runs in interrupt context, so it must be short and must not
+  allocate. `schedule_work` moves the rest to the idle path.
 * QEMU's `-kernel` only loads 32-bit ELF, so `make` produces `build/eris32.elf`
   with `objcopy`. `build/eris.elf` is the real image and the one an ISO uses.
 
@@ -217,13 +232,15 @@ make
 ```
 ./scripts/faultinject.sh
 qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append mmtest
+qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append timetest
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning
 and on an empty serial log. `faultinject.sh` does the opposite: it drives
 `unmapped`, `opcode`, `divide`, `doublefault`, `stack`, `text`, `rodata` and
 `panic` through the panic path and fails if any of them does not report a panic
-with a backtrace. The `mmtest` switch runs the heap growth check at boot.
+with a backtrace. The `mmtest` switch runs the heap growth check at boot and
+`timetest` measures the clock against a known delay and a timer deadline.
 Paste both in the pull request.
 
 ## License

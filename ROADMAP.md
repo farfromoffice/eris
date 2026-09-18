@@ -18,7 +18,7 @@ here.
 5. [Gap table](#gap-table)
 6. [Phase 1: survive a fault](#phase-1-survive-a-fault) (done)
 7. [Phase 2: virtual memory](#phase-2-virtual-memory) (mostly done)
-8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time)
+8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time) (done)
 9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu)
 10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling)
 11. [Phase 6: loadable modules](#phase-6-loadable-modules)
@@ -43,6 +43,9 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga`,
 `keyboard`, `desktop`.
+
+Interrupts come through the IO APIC as of phase 3, time is a nanosecond clock
+from the HPET, and callbacks are deadlines rather than tick counts.
 
 The kernel builds its own page tables at boot: the first gigabyte stays directly
 mapped for the allocator, the image carries real permissions, device memory is
@@ -130,7 +133,7 @@ either.
 | --- | --- | --- | --- |
 | Fault survival | IST stacks, guard pages, symbolised backtrace, fault injection | Separate stacks for double fault and NMI, symbolised backtrace | done |
 | Virtual memory | Own page tables, W^X, vmalloc, growable heap, device windows | Per address space page tables, higher half, demand paging | mostly done |
-| Interrupt controller | Legacy PIC, PIT tick only | ACPI tables, local APIC, IO APIC, MSI, HPET or TSC deadline | 3 |
+| Interrupt controller | ACPI tables, local APIC, IO APIC, HPET clock, deadline timers | MSI, x2APIC, per CPU timers | mostly done |
 | Concurrency | Interrupt masking, plain integer refcounts | Spinlocks, IRQ safe locks, atomics, per CPU areas | 4 |
 | Multiprocessing | One CPU | AP trampoline, per CPU GDT and TSS, IPIs, TLB shootdown | 4 |
 | Scheduling | None, idle loop | Kernel threads, context switch, wait queues, preemption | 5 |
@@ -243,51 +246,46 @@ linker never emits, which is why the write test targets `kernel_main`.
 ## Phase 3: modern interrupts and time
 
 **Goal.** Interrupts arrive through the APIC, and time is a real clock rather
-than a tick counter.
-
-**Why now.** SMP needs the local APIC, MSI needs it, and every later subsystem
-needs timeouts finer than 10 ms.
+than a tick counter. Landed on main, ships in 0.3, Quaoar.
 
 **Work**
 
-- [ ] `kernel/acpi/tables.cpp`: RSDP scan, RSDT and XSDT walk, checksum validation,
-  MADT and HPET and FADT parsing. Just tables, no interpreter, no AML yet.
-- [ ] `kernel/cpu/lapic.cpp`: local APIC in xAPIC and x2APIC mode, spurious vector,
-  end of interrupt, timer in one shot and periodic mode calibrated against the
-  PIT once.
-- [ ] `kernel/cpu/ioapic.cpp`: redirection entries built from the MADT, ISA overrides
-  honoured, legacy PIC masked off after the switch.
-- [ ] `include/eris/time.hpp` grows a real clock:
+- [x] ~~`kernel/acpi/tables.cpp`: RSDP scan through the EBDA and the BIOS area,
+  RSDT and XSDT walk with checksums, MADT parsing for the local APIC address,
+  the IO APIC and the interrupt source overrides, and the HPET address.~~
+- [x] ~~`kernel/cpu/lapic.cpp`: local APIC enabled through its MSR, spurious
+  vector installed, timer calibrated against the PIT and driven in one shot
+  mode.~~
+- [x] ~~`kernel/cpu/ioapic.cpp`: redirection entries built from the MADT with the
+  polarity and trigger mode the overrides ask for, everything masked until a
+  driver asks for a line, legacy PIC masked off once the pair is up.~~
+- [x] ~~`kernel/cpu/irq.cpp`: one place that decides which controller is in charge,
+  so `irq_mask`, `irq_unmask` and `irq_eoi` read the same whether the machine
+  ended up on the APIC or on the legacy chips.~~
+- [x] ~~`kernel/time/clock.cpp`: HPET where the firmware offers one, a TSC
+  calibrated against the PIT otherwise, exposed as `monotonic_ns`, with
+  `udelay` and `mdelay` on top.~~
+- [x] ~~`kernel/time/timers.cpp`: a deadline queue with one shot and periodic
+  callbacks. The hardware timer is only ever programmed for the nearest
+  deadline, so a hundred pending timers still cost one interrupt.~~
+- [x] ~~`kernel/lib/work.cpp`: `schedule_work` hands the long half of an interrupt
+  to the idle path, where interrupts are enabled and the handler has already
+  returned.~~
+- [x] ~~`kernel/cmdline.cpp`: landed with phase 1, which is where the fault switch
+  needed it.~~
+- [ ] x2APIC mode and the FADT. Neither is needed while there is one CPU and
+  nothing asks about power management, and both belong with the SMP work.
 
-  ```cpp
-  namespace eris {
-  u64 monotonic_ns();
-  u64 boot_ns();
-  using TimerCallback = void (*)(void* context);
-  TimerHandle timer_after(u64 delay_ns, TimerCallback cb, void* context);
-  TimerHandle timer_every(u64 period_ns, TimerCallback cb, void* context);
-  void timer_cancel(TimerHandle handle);
-  void udelay(u64 microseconds);
-  }
-  ```
+**Done when.** The PIC is masked, IRQs arrive through the IO APIC, the clock
+drifts less than a millisecond a minute, and a hundred registered timers fire in
+order. Done: `timetest` measures a 200 ms delay as 200.061 ms on the HPET and a
+50 ms timer firing at 50.181 ms, and the keyboard reaches the desktop through
+the IO APIC.
 
-- [ ] `kernel/time/clock.cpp`: TSC calibration against the HPET, invariant TSC
-  detection, fallback order HPET then PIT.
-- [ ] `kernel/time/timers.cpp`: a deadline ordered queue, one hardware timer
-  programmed to the nearest deadline, so a hundred pending timers cost one
-  interrupt.
-- [ ] Deferred work: `schedule_work(fn, context)` running outside interrupt context,
-  a tasklet in all but name, so handlers stay short.
-- [ ] `kernel/cmdline.cpp`: parse the multiboot command line into key value pairs,
-  which the test harness and later phases both want.
-
-**Done when.** The PIC is masked, IRQs arrive through the IO APIC, `monotonic_ns`
-advances with a drift under a millisecond per minute against QEMU's clock, and a
-hundred registered timers fire in order.
-
-**Traps.** APIC timer frequency is not fixed across machines, so calibrate every
-boot. ISA IRQ overrides in the MADT are easy to skip and produce a keyboard that
-works on QEMU and not on real hardware.
+**Traps.** The APIC timer frequency is not fixed across machines, so it gets
+calibrated every boot against the PIT, which is the only source that works
+before anything else is trusted. The interrupt source overrides in the MADT are
+easy to skip and produce a keyboard that works on QEMU and nowhere else.
 
 ## Phase 4: concurrency and more than one CPU
 
@@ -1224,7 +1222,7 @@ Not a phase, work that grows with each of the above.
 ```
 1  fault survival ......... done
 2  virtual memory ......... done except the higher half move
-3  apic and time .......... needs 2 for MMIO mapping
+3  apic and time .......... done
 4  locks and SMP .......... needs 3
 5  threads ................ needs 4
 6  loadable modules ....... needs 2, much better with 5
@@ -1254,7 +1252,7 @@ tag and never reused.
 | --- | --- | --- | --- |
 | 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, three built in modules | released |
 | 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | phase 1 and most of 2 landed |
-| 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | planned |
+| 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | landed |
 | 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | planned |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | planned |
 | 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | planned |
