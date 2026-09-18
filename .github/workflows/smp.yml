@@ -1,0 +1,37 @@
+name: smp
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  cores:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        cpus: [1, 2, 4, 8]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Boot on ${{ matrix.cpus }} cores
+        run: CPUS=${{ matrix.cpus }} ./scripts/smp-test.sh
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smp-log-${{ matrix.cpus }}
+          path: build/smp.log
+          retention-days: 7

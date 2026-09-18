@@ -9,6 +9,7 @@
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/acpi.hpp>
+#include <eris/atomic.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
 #include <eris/module.hpp>
@@ -163,6 +164,46 @@ void time_selftest()
             ticks());
 }
 
+constinit Atomic<u64> smp_hits{0};
+
+// Every core hammers the same refcount and the same allocator, which is the
+// cheapest way to find out whether the locks added in this phase are real.
+void smp_worker()
+{
+    constexpr u64 rounds = 20000;
+
+    for (u64 i = 0; i < rounds; ++i) {
+        if (module_get("vga")) {
+            module_put("vga");
+            smp_hits.fetch_add(1);
+        }
+
+        if (void* block = kmalloc(64); block != nullptr)
+            kfree(block);
+    }
+}
+
+void smp_selftest()
+{
+    const Module* vga = module_find("vga");
+    const u32 before = vga != nullptr ? vga->references.value() : 0;
+
+    const bool answered = arch::smp_run_on_others(smp_worker, 5000000000ULL);
+    smp_worker();
+
+    const u32 after = vga != nullptr ? vga->references.value() : 0;
+
+    pr_info("smp selftest: %lu cores, %lu refcount round trips, vga refs %u then %u%s\n",
+            static_cast<u64>(arch::cpu_online_count()),
+            smp_hits.load(),
+            before,
+            after,
+            answered ? "" : ", some core never answered");
+
+    if (before != after)
+        pr_err("smp selftest: the refcount did not come back to where it started\n");
+}
+
 void report_memory()
 {
     const auto free = mm::free_pages_count();
@@ -185,7 +226,7 @@ void report_modules()
                 module->info->name,
                 module->info->version,
                 module_state_name(module->state),
-                module->refcount,
+                module->references.value(),
                 module->info->license);
     }
 
@@ -197,6 +238,8 @@ void report_modules()
 
 void start_kernel(u32 multiboot_magic, u64 multiboot_info)
 {
+    arch::percpu_setup(0, 0);
+
     serial_init();
     print_banner();
 
@@ -221,11 +264,22 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     timers_init();
     arch::sti();
 
+    arch::smp_init();
+
     if (cmdline_has("timetest"))
         time_selftest();
 
     module_init_builtin();
     report_modules();
+
+    if (cmdline_has("smptest"))
+        smp_selftest();
+
+    // Lets a test run end the machine instead of waiting out a timeout.
+    if (cmdline_has("test_exit")) {
+        pr_info("selftests finished, leaving\n");
+        arch::outb(0xF4, 0x10);
+    }
 
     if (const char* kind = cmdline_value("fault"); kind != nullptr)
         inject_fault(kind);
