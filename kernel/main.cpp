@@ -186,14 +186,14 @@ void smp_worker()
 void smp_selftest()
 {
     const Module* vga = module_find("vga");
-    const u32 before = vga != nullptr ? vga->references.value() : 0;
+    const u32 before = vga != nullptr ? vga->users.value() : 0;
 
     const bool answered = arch::smp_run_on_others(smp_worker, 5000000000ULL);
     smp_worker();
 
-    const u32 after = vga != nullptr ? vga->references.value() : 0;
+    const u32 after = vga != nullptr ? vga->users.value() : 0;
 
-    pr_info("smp selftest: %lu cores, %lu refcount round trips, vga refs %u then %u%s\n",
+    pr_info("smp selftest: %lu cores, %lu refcount round trips, vga users %u then %u%s\n",
             static_cast<u64>(arch::cpu_online_count()),
             smp_hits.load(),
             before,
@@ -222,11 +222,12 @@ void report_modules()
 
     for (usize i = 0; i < module_count(); ++i) {
         const Module* module = module_at(i);
-        pr_info("  %s %s [%s] refs=%u license=%s\n",
+        pr_info("  %s %s [%s] dependents=%u users=%u license=%s\n",
                 module->info->name,
                 module->info->version,
                 module_state_name(module->state),
-                module->references.value(),
+                module->dependents.value(),
+                module->users.value(),
                 module->info->license);
     }
 

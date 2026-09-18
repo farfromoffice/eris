@@ -33,7 +33,8 @@ struct ModuleInfo {
 struct Module {
     const ModuleInfo* info;
     ModuleState state;
-    RefCount references;
+    RefCount dependents; // Ready modules that list this one as a dependency
+    RefCount users;      // module_get calls not yet matched by module_put
     int error;
 };
 

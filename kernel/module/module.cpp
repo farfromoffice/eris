@@ -67,7 +67,7 @@ int load_dependencies(Module& module, usize depth)
 void acquire_dependencies(const Module& module)
 {
     for (usize i = 0; i < module.info->dep_count; ++i)
-        find(module.info->deps[i])->references.take();
+        find(module.info->deps[i])->dependents.take();
 }
 
 int load_locked(Module& module, usize depth)
@@ -126,9 +126,9 @@ void release_dependencies(const Module& module)
         Module* dep = find(module.info->deps[i]);
         if (dep == nullptr)
             continue;
-        if (!dep->references.held())
+        if (!dep->dependents.held())
             panic("module %s: no reference left to drop on %s", module.info->name, dep->info->name);
-        dep->references.release();
+        dep->dependents.release();
     }
 }
 
@@ -168,8 +168,9 @@ int module_unload(const char* name)
         return -1;
     if (module->state != ModuleState::Ready)
         return 0;
-    if (module->references.held()) {
-        pr_warn("module %s still in use (%u)\n", name, module->references.value());
+    if (module->dependents.held() || module->users.held()) {
+        pr_warn("module %s still in use, dependents=%u users=%u\n", name,
+                module->dependents.value(), module->users.value());
         return -1;
     }
 
@@ -205,7 +206,7 @@ bool module_get(const char* name)
     if (module == nullptr || module->state != ModuleState::Ready)
         return false;
 
-    module->references.take();
+    module->users.take();
     return true;
 }
 
@@ -214,8 +215,9 @@ void module_put(const char* name)
     IrqGuard guard(table_lock);
 
     Module* module = find(name);
-    if (module != nullptr && module->references.held())
-        module->references.release();
+    if (module == nullptr || !module->users.held())
+        panic("module_put(%s) without a matching module_get", name);
+    module->users.release();
 }
 
 bool module_license_is_free(const char* license)
