@@ -14,14 +14,19 @@ align 8
     dd MB_CHECKSUM
 
 section .bss
+; The stack sits at the bottom of .bss with its guard page below it, so an
+; overflow lands in the guard instead of in the page tables.
+align 4096
+global boot_stack_guard
+boot_stack_guard:
+    resb 4096
+stack_bottom:
+    resb 64 * 1024
+stack_top:
 align 4096
 pml4:       resb 4096
 pdpt:       resb 4096
 pd:         resb 4096
-align 16
-stack_bottom:
-    resb 64 * 1024
-stack_top:
 
 section .rodata
 align 16
