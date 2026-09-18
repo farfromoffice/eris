@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/lock.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
 #include <eris/panic.hpp>
@@ -26,6 +27,7 @@ constinit BlockHeader* tail = nullptr;
 constinit virt_addr heap_base = 0;
 constinit usize committed = 0;
 constinit usize used = 0;
+constinit IrqSpinLock heap_lock{};
 
 usize align_up(usize value)
 {
@@ -150,6 +152,7 @@ void* kmalloc(usize size)
         return nullptr;
 
     const usize wanted = align_up(size);
+    IrqGuard guard(heap_lock);
 
     for (int attempt = 0; attempt < 2; ++attempt) {
         for (BlockHeader* block = head; block != nullptr; block = block->next) {
@@ -181,6 +184,8 @@ void kfree(void* ptr)
 {
     if (ptr == nullptr)
         return;
+
+    IrqGuard guard(heap_lock);
 
     auto* block = reinterpret_cast<BlockHeader*>(static_cast<u8*>(ptr) - sizeof(BlockHeader));
     if (block->free)

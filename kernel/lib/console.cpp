@@ -2,6 +2,7 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/console.hpp>
+#include <eris/lock.hpp>
 
 namespace eris {
 namespace {
@@ -10,6 +11,7 @@ constexpr usize max_consoles = 4;
 
 constinit Console* consoles[max_consoles]{};
 constinit usize console_count = 0;
+constinit RecursiveIrqLock console_lock{};
 
 } // namespace
 
@@ -21,6 +23,8 @@ void Console::write(const char* text)
 
 void console_register(Console* console)
 {
+    RecursiveGuard guard(console_lock);
+
     if (console == nullptr || console_count >= max_consoles)
         return;
 
@@ -34,6 +38,8 @@ void console_register(Console* console)
 
 void console_unregister(Console* console)
 {
+    RecursiveGuard guard(console_lock);
+
     for (usize i = 0; i < console_count; ++i) {
         if (consoles[i] != console)
             continue;
@@ -45,16 +51,34 @@ void console_unregister(Console* console)
     }
 }
 
+u64 console_begin()
+{
+    return console_lock.lock();
+}
+
+void console_end(u64 token)
+{
+    console_lock.unlock(token);
+}
+
 void console_put(char c)
 {
+    RecursiveGuard guard(console_lock);
+
     for (usize i = 0; i < console_count; ++i)
         consoles[i]->put(c);
 }
 
+// Taken once for the whole string, otherwise two cores interleave letter by
+// letter and the log stops being readable.
 void console_write(const char* text)
 {
-    for (const char* p = text; *p != '\0'; ++p)
-        console_put(*p);
+    RecursiveGuard guard(console_lock);
+
+    for (const char* p = text; *p != '\0'; ++p) {
+        for (usize i = 0; i < console_count; ++i)
+            consoles[i]->put(*p);
+    }
 }
 
 } // namespace eris

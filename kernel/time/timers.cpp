@@ -4,6 +4,7 @@
 #include <eris/apic.hpp>
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
+#include <eris/lock.hpp>
 #include <eris/printk.hpp>
 #include <eris/time.hpp>
 
@@ -27,6 +28,7 @@ constinit Timer timers[max_timers]{};
 constinit TimerHandle next_handle = 1;
 constinit u64 tick_count = 0;
 constinit bool lapic_driven = false;
+constinit IrqSpinLock timer_lock{};
 
 Timer* find_free()
 {
@@ -70,6 +72,8 @@ TimerHandle arm(u64 delay_ns, u64 period_ns, TimerCallback callback, void* conte
 {
     if (callback == nullptr)
         return invalid_timer;
+
+    IrqGuard guard(timer_lock);
 
     Timer* timer = find_free();
     if (timer == nullptr) {
@@ -138,6 +142,8 @@ TimerHandle timer_every(u64 period_ns, TimerCallback callback, void* context)
 
 void timer_cancel(TimerHandle handle)
 {
+    IrqGuard guard(timer_lock);
+
     for (auto& timer : timers) {
         if (timer.active && timer.handle == handle) {
             timer.active = false;

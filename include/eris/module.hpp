@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <eris/atomic.hpp>
 #include <eris/compiler.hpp>
 #include <eris/types.hpp>
 
@@ -32,7 +33,7 @@ struct ModuleInfo {
 struct Module {
     const ModuleInfo* info;
     ModuleState state;
-    u32 refcount;
+    RefCount references;
     int error;
 };
 

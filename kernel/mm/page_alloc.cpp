@@ -2,6 +2,7 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/compiler.hpp>
+#include <eris/lock.hpp>
 #include <eris/mm.hpp>
 #include <eris/multiboot.hpp>
 #include <eris/panic.hpp>
@@ -18,6 +19,7 @@ constexpr usize managed_pages = managed_limit / page_size;
 
 constinit u8 bitmap[managed_pages / 8]{};
 constinit usize used_pages = 0;
+constinit IrqSpinLock allocator_lock{};
 
 bool test_bit(usize index)
 {
@@ -134,6 +136,8 @@ phys_addr alloc_pages(usize count)
     if (count == 0)
         return 0;
 
+    IrqGuard guard(allocator_lock);
+
     usize run = 0;
     for (usize i = 0; i < managed_pages; ++i) {
         if (test_bit(i)) {
@@ -161,6 +165,8 @@ void free_page(phys_addr page)
 
 void free_pages(phys_addr page, usize count)
 {
+    IrqGuard guard(allocator_lock);
+
     const usize first = page / page_size;
     for (usize i = first; i < first + count && i < managed_pages; ++i) {
         if (test_bit(i)) {

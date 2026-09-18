@@ -119,6 +119,8 @@ ERIS_NORETURN void halt()
 void panic(const char* fmt, ...)
 {
     arch::cli();
+    const u64 token = console_begin();
+    arch::smp_halt_others();
 
     console_write("\n*** kernel panic: ");
 
@@ -132,12 +134,15 @@ void panic(const char* fmt, ...)
     dump_stack_guards();
     backtrace();
     dump_modules();
+    console_end(token);
     halt();
 }
 
 void panic_with_registers(const arch::Registers& regs, const char* fmt, ...)
 {
     arch::cli();
+    const u64 token = console_begin();
+    arch::smp_halt_others();
 
     console_write("\n*** kernel panic: ");
 
@@ -153,6 +158,7 @@ void panic_with_registers(const arch::Registers& regs, const char* fmt, ...)
     dump_stack_guards();
     backtrace_from(regs.rip, regs.rbp);
     dump_modules();
+    console_end(token);
     halt();
 }
 

@@ -64,6 +64,11 @@ private:
 
 void paging_init();
 
+// Every CPU caches translations, so an unmap is only finished once the others
+// have thrown their copies away.
+void tlb_flush_local();
+void tlb_shootdown();
+
 // Virtual space handed out for the heap, module images and device windows.
 virt_addr vmalloc_reserve(usize length);
 void vmalloc_release(virt_addr address, usize length);

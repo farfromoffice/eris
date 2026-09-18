@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/lock.hpp>
 #include <eris/module.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
@@ -31,6 +32,7 @@ constexpr const char* free_licenses[] = {
 constinit Module modules[max_modules]{};
 constinit usize registered = 0;
 constinit bool tainted = false;
+constinit IrqSpinLock table_lock{};
 
 int load_locked(Module& module, usize depth);
 
@@ -65,7 +67,7 @@ int load_dependencies(Module& module, usize depth)
 void acquire_dependencies(const Module& module)
 {
     for (usize i = 0; i < module.info->dep_count; ++i)
-        ++find(module.info->deps[i])->refcount;
+        find(module.info->deps[i])->references.take();
 }
 
 int load_locked(Module& module, usize depth)
@@ -122,9 +124,11 @@ void release_dependencies(const Module& module)
 {
     for (usize i = 0; i < module.info->dep_count; ++i) {
         Module* dep = find(module.info->deps[i]);
-        if (dep->refcount == 0)
+        if (dep == nullptr)
+            continue;
+        if (!dep->references.held())
             panic("module %s: no reference left to drop on %s", module.info->name, dep->info->name);
-        --dep->refcount;
+        dep->references.release();
     }
 }
 
@@ -137,7 +141,10 @@ void module_init_builtin()
             pr_warn("module table full, %s skipped\n", info->name);
             continue;
         }
-        modules[registered++] = Module{ info, ModuleState::Registered, 0, 0 };
+        Module& slot = modules[registered++];
+        slot.info = info;
+        slot.state = ModuleState::Registered;
+        slot.error = 0;
     }
 
     pr_info("%lu builtin modules registered\n", static_cast<u64>(registered));
@@ -161,8 +168,8 @@ int module_unload(const char* name)
         return -1;
     if (module->state != ModuleState::Ready)
         return 0;
-    if (module->refcount > 0) {
-        pr_warn("module %s still in use (%u)\n", name, module->refcount);
+    if (module->references.held()) {
+        pr_warn("module %s still in use (%u)\n", name, module->references.value());
         return -1;
     }
 
@@ -192,18 +199,23 @@ usize module_count()
 
 bool module_get(const char* name)
 {
+    IrqGuard guard(table_lock);
+
     Module* module = find(name);
     if (module == nullptr || module->state != ModuleState::Ready)
         return false;
-    ++module->refcount;
+
+    module->references.take();
     return true;
 }
 
 void module_put(const char* name)
 {
+    IrqGuard guard(table_lock);
+
     Module* module = find(name);
-    if (module != nullptr && module->refcount > 0)
-        --module->refcount;
+    if (module != nullptr && module->references.held())
+        module->references.release();
 }
 
 bool module_license_is_free(const char* license)

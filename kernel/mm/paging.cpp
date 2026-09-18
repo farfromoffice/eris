@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/apic.hpp>
 #include <eris/cpu.hpp>
+#include <eris/lock.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
 #include <eris/panic.hpp>
@@ -38,6 +40,10 @@ constexpr usize entries_per_table = 512;
 constexpr phys_addr direct_limit = 1ULL << 30;
 
 constinit AddressSpace kernel_space{};
+
+// One lock for the whole table walk. Two cores editing the same tables is how
+// a page allocator turns into a page fault on every core at once.
+constinit IrqSpinLock table_lock{};
 
 u64 encode(PageFlags flags)
 {
@@ -161,6 +167,7 @@ u64* AddressSpace::table_for(virt_addr address, bool create)
 
 bool AddressSpace::map(virt_addr address, phys_addr frame, usize length, PageFlags flags)
 {
+    IrqGuard guard(table_lock);
     const u64 bits = encode(flags);
 
     for (usize offset = 0; offset < length; offset += page_size) {
@@ -177,6 +184,9 @@ bool AddressSpace::map(virt_addr address, phys_addr frame, usize length, PageFla
 
 bool AddressSpace::unmap(virt_addr address, usize length)
 {
+    const bool shared = arch::cpu_online_count() > 1;
+    IrqGuard guard(table_lock);
+
     for (usize offset = 0; offset < length; offset += page_size) {
         u64* table = table_for(address + offset, true);
         if (table == nullptr)
@@ -186,11 +196,15 @@ bool AddressSpace::unmap(virt_addr address, usize length)
         invalidate(address + offset);
     }
 
+    if (shared)
+        arch::lapic_broadcast_ipi(arch::vector_tlb_shootdown);
+
     return true;
 }
 
 bool AddressSpace::protect(virt_addr address, usize length, PageFlags flags)
 {
+    IrqGuard guard(table_lock);
     const u64 bits = encode(flags);
 
     for (usize offset = 0; offset < length; offset += page_size) {
@@ -239,6 +253,21 @@ bool AddressSpace::mapped(virt_addr address) const
 void AddressSpace::activate() const
 {
     asm volatile("mov %0, %%cr3" : : "r"(root_) : "memory");
+}
+
+void tlb_flush_local()
+{
+    u64 cr3;
+    asm volatile("mov %%cr3, %0" : "=r"(cr3));
+    asm volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
+}
+
+void tlb_shootdown()
+{
+    tlb_flush_local();
+
+    if (arch::cpu_online_count() > 1)
+        arch::lapic_broadcast_ipi(arch::vector_tlb_shootdown);
 }
 
 void paging_init()

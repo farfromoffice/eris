@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/lock.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
 #include <eris/printk.hpp>
@@ -27,6 +28,7 @@ struct Range {
 constinit Range free_ranges[max_ranges]{};
 constinit usize range_count = 0;
 constinit bool initialised = false;
+constinit IrqSpinLock range_lock{};
 
 void ensure_initialised()
 {
@@ -49,6 +51,7 @@ usize round_up(usize length)
 // one region faults instead of corrupting the next.
 virt_addr vmalloc_reserve(usize length)
 {
+    IrqGuard guard(range_lock);
     ensure_initialised();
 
     const usize wanted = round_up(length) + page_size;
@@ -74,6 +77,7 @@ virt_addr vmalloc_reserve(usize length)
 
 void vmalloc_release(virt_addr address, usize length)
 {
+    IrqGuard guard(range_lock);
     ensure_initialised();
 
     const usize released = round_up(length) + page_size;

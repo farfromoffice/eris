@@ -130,6 +130,13 @@ void report_page_fault(const Registers& regs)
 
 extern "C" void isr_dispatch(Registers& regs)
 {
+    if (regs.vector == 2 && smp_halting()) {
+        for (;;) {
+            cli();
+            hlt();
+        }
+    }
+
     if (regs.vector < 32) {
         if (regs.vector == 8)
             report_double_fault(regs);
@@ -144,6 +151,12 @@ extern "C" void isr_dispatch(Registers& regs)
 
     if (regs.vector == vector_spurious)
         return;
+
+    if (regs.vector == vector_tlb_shootdown) {
+        mm::tlb_flush_local();
+        lapic_eoi();
+        return;
+    }
 
     if (regs.vector == vector_lapic_timer) {
         lapic_eoi();
