@@ -21,7 +21,7 @@ or an empty log.
 A healthy boot looks like this:
 
 ```
-eris kernel 0.1 (x86_64, c++23)
+eris 0.1 "Dysnomia" (x86_64, c++23)
 [inf] memory: 262144 pages total, 130235 free (508 MiB)
 [inf] heap: 2048 KiB
 [inf] 3 builtin modules registered

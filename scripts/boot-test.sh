@@ -28,7 +28,7 @@ if [[ ! -s $LOG ]]; then
 fi
 
 expected=(
-    "eris kernel"
+    "[inf] eris "
     "builtin modules registered"
     "module vga"
     "module keyboard"
@@ -37,7 +37,7 @@ expected=(
 
 status=0
 for line in "${expected[@]}"; do
-    if grep -q "$line" "$LOG"; then
+    if grep -qF "$line" "$LOG"; then
         echo "ok   $line"
     else
         echo "fail $line" >&2

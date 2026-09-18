@@ -10,11 +10,21 @@
 #include <eris/printk.hpp>
 #include <eris/serial.hpp>
 #include <eris/time.hpp>
+#include <eris/version.hpp>
 
 namespace eris {
 namespace {
 
-constexpr const char* banner = "eris kernel 0.1 (x86_64, c++23)\n";
+
+
+void print_banner()
+{
+    printk(LogLevel::Info, "eris %s \"%s\" (%s, %s)\n",
+           version_string,
+           version_name,
+           version_arch,
+           version_language);
+}
 
 void report_memory()
 {
@@ -51,7 +61,7 @@ void report_modules()
 void start_kernel(u32 multiboot_magic, u64 multiboot_info)
 {
     serial_init();
-    console_write(banner);
+    print_banner();
 
     arch::gdt_init();
     arch::idt_init();
