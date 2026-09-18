@@ -151,10 +151,12 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   the section needs `KEEP` in the linker script.
 * Exported symbols live in `.eris_symtab` inside `.data`, because the macro
   initialises them at runtime through `.init_array`.
-* A `Ready` module holds exactly one reference on each dependency, taken on the
-  transition to `Ready` and dropped on unload. A failed load holds none, no
-  failure path in the loader has to undo a reference. Dropping a reference that
-  is not there panics instead of being skipped.
+* A module counts two kinds of reference separately. `dependents` is how many
+  `Ready` modules list it as a dependency: each takes one on the transition to
+  `Ready` and drops it on unload, and a failed load holds none. No failure
+  path in the loader has to undo a reference. `users` counts `module_get` calls
+  not yet matched by `module_put`. Unload needs both at zero. Dropping either kind
+  of reference when none is held panics at the call that did it.
 * `.bss` is cleared in the boot stub, not in `call_global_ctors`. The stack, the
   page tables and the allocator bitmap live in `.bss` and are already in use by
   then. The stub clears the direction flag first, because multiboot leaves it
