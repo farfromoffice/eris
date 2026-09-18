@@ -2,7 +2,9 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/mm.hpp>
+#include <eris/paging.hpp>
 #include <eris/panic.hpp>
+#include <eris/printk.hpp>
 #include <eris/string.hpp>
 
 namespace eris {
@@ -15,11 +17,14 @@ struct BlockHeader {
     BlockHeader* prev;
 };
 
-constexpr usize heap_pages = 512;
+constexpr usize heap_reserved = 64 * 1024 * 1024;
+constexpr usize heap_growth_step = 2 * 1024 * 1024;
 constexpr usize alignment = 16;
 
 constinit BlockHeader* head = nullptr;
-constinit usize capacity = 0;
+constinit BlockHeader* tail = nullptr;
+constinit virt_addr heap_base = 0;
+constinit usize committed = 0;
 constinit usize used = 0;
 
 usize align_up(usize value)
@@ -41,6 +46,9 @@ void split(BlockHeader* block, usize size)
 
     if (block->next != nullptr)
         block->next->prev = next;
+    else
+        tail = next;
+
     block->next = next;
     block->size = size;
 }
@@ -48,18 +56,69 @@ void split(BlockHeader* block, usize size)
 void merge(BlockHeader* block)
 {
     if (block->next != nullptr && block->next->free) {
-        block->size += sizeof(BlockHeader) + block->next->size;
-        block->next = block->next->next;
+        BlockHeader* victim = block->next;
+        block->size += sizeof(BlockHeader) + victim->size;
+        block->next = victim->next;
+
         if (block->next != nullptr)
             block->next->prev = block;
+        else
+            tail = block;
     }
 
     if (block->prev != nullptr && block->prev->free) {
-        block->prev->size += sizeof(BlockHeader) + block->size;
-        block->prev->next = block->next;
-        if (block->next != nullptr)
-            block->next->prev = block->prev;
+        BlockHeader* previous = block->prev;
+        previous->size += sizeof(BlockHeader) + block->size;
+        previous->next = block->next;
+
+        if (previous->next != nullptr)
+            previous->next->prev = previous;
+        else
+            tail = previous;
     }
+}
+
+// Commits more physical pages at the end of the reservation and gives them to
+// the free list. The heap only occupies what it has actually handed out.
+bool grow(usize wanted)
+{
+    usize step = heap_growth_step;
+    while (step < wanted + sizeof(BlockHeader))
+        step += heap_growth_step;
+
+    if (committed + step > heap_reserved)
+        return false;
+
+    const virt_addr where = heap_base + committed;
+
+    for (usize offset = 0; offset < step; offset += page_size) {
+        const phys_addr frame = mm::alloc_page();
+        if (frame == 0)
+            return false;
+
+        if (!mm::AddressSpace::kernel().map(where + offset, frame, page_size,
+                                            mm::PageFlags::Write | mm::PageFlags::NoExecute)) {
+            mm::free_page(frame);
+            return false;
+        }
+    }
+
+    auto* block = reinterpret_cast<BlockHeader*>(where);
+    block->size = step - sizeof(BlockHeader);
+    block->free = true;
+    block->next = nullptr;
+    block->prev = tail;
+
+    if (tail != nullptr)
+        tail->next = block;
+    tail = block;
+
+    if (head == nullptr)
+        head = block;
+
+    committed += step;
+    merge(block);
+    return true;
 }
 
 } // namespace
@@ -68,36 +127,43 @@ namespace mm {
 
 void heap_init()
 {
-    const phys_addr base = alloc_pages(heap_pages);
-    if (base == 0)
-        panic("heap: cannot reserve %lu pages", static_cast<u64>(heap_pages));
+    heap_base = vmalloc_reserve(heap_reserved);
+    if (heap_base == 0)
+        panic("heap: no virtual space for the reservation");
 
-    capacity = heap_pages * page_size;
-    head = reinterpret_cast<BlockHeader*>(base);
-    head->size = capacity - sizeof(BlockHeader);
-    head->free = true;
-    head->next = nullptr;
-    head->prev = nullptr;
+    head = nullptr;
+    tail = nullptr;
+    committed = 0;
     used = 0;
+
+    // One growth step is the initial commit, asking for the step itself would
+    // round up to two.
+    if (!grow(page_size))
+        panic("heap: cannot commit the first %lu KiB", static_cast<u64>(heap_growth_step / 1024));
 }
 
 } // namespace mm
 
 void* kmalloc(usize size)
 {
-    if (size == 0 || size > capacity)
+    if (size == 0 || size > heap_reserved)
         return nullptr;
 
     const usize wanted = align_up(size);
 
-    for (BlockHeader* block = head; block != nullptr; block = block->next) {
-        if (!block->free || block->size < wanted)
-            continue;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        for (BlockHeader* block = head; block != nullptr; block = block->next) {
+            if (!block->free || block->size < wanted)
+                continue;
 
-        split(block, wanted);
-        block->free = false;
-        used += block->size;
-        return reinterpret_cast<u8*>(block) + sizeof(BlockHeader);
+            split(block, wanted);
+            block->free = false;
+            used += block->size;
+            return reinterpret_cast<u8*>(block) + sizeof(BlockHeader);
+        }
+
+        if (!grow(wanted))
+            return nullptr;
     }
 
     return nullptr;
@@ -132,7 +198,7 @@ usize heap_used()
 
 usize heap_capacity()
 {
-    return capacity;
+    return committed;
 }
 
 } // namespace eris
