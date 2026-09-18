@@ -1,0 +1,30 @@
+name: clang-tidy
+
+on:
+  pull_request:
+    paths:
+      - '**.cpp'
+      - '**.hpp'
+      - '.clang-tidy'
+  workflow_dispatch:
+
+jobs:
+  tidy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-tidy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-tidy build-essential nasm
+
+      - name: Run clang-tidy
+        run: |
+          status=0
+          for file in $(git ls-files '*.cpp'); do
+            clang-tidy "$file" -- \
+              -std=c++23 -ffreestanding -fno-exceptions -fno-rtti \
+              -Iinclude -Imodules -target x86_64-unknown-none || status=1
+          done
+          exit $status

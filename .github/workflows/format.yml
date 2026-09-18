@@ -1,0 +1,27 @@
+name: format
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        run: |
+          files=$(git ls-files '*.cpp' '*.hpp')
+          clang-format --dry-run --Werror $files
+
+      - name: Show the diff on failure
+        if: failure()
+        run: |
+          clang-format -i $(git ls-files '*.cpp' '*.hpp')
+          git diff --color=always

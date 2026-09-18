@@ -1,0 +1,38 @@
+name: license
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: LICENSE must stay the verbatim GPLv2 text
+        run: |
+          expected=0636e73ff0215e8d672dc4c32c317bb3
+          actual=$(md5sum LICENSE | cut -d' ' -f1)
+          if [[ $actual != "$expected" ]]; then
+            echo "LICENSE no longer matches the canonical GPLv2 text" >&2
+            echo "expected $expected, got $actual" >&2
+            exit 1
+          fi
+          echo "LICENSE is intact"
+
+      - name: NOTICE must name the project and the holder
+        run: |
+          grep -q "^Copyright (C) " NOTICE
+          grep -qi "GNU General Public License" NOTICE
+
+      - name: Modules must declare a free license
+        run: |
+          status=0
+          for file in $(grep -rl 'ERIS_MODULE(' modules); do
+            if ! grep -q 'ERIS_MODULE("[^"]*", *"[^"]*", *"[^"]*", *"\(GPL\|LGPL\|MIT\|BSD\|Apache\)' "$file"; then
+              echo "$file declares a license that taints the kernel" >&2
+              status=1
+            fi
+          done
+          exit $status

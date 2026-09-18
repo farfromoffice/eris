@@ -1,0 +1,32 @@
+name: iso
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and GRUB
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm xorriso grub-pc-bin grub-common
+
+      - name: Build the ISO
+        run: |
+          make
+          mkdir -p build/iso/boot/grub
+          cp build/eris.elf build/iso/boot/eris.elf
+          cp boot/grub.cfg build/iso/boot/grub/grub.cfg
+          grub-mkrescue -o build/eris.iso build/iso
+
+      - name: Upload the ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: eris-iso
+          path: build/eris.iso
+          retention-days: 30

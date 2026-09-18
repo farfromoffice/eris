@@ -1,0 +1,98 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      commits: ${{ steps.count.outputs.commits }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Count commits since yesterday
+        id: count
+        run: |
+          commits=$(git log --oneline --since='24 hours ago' | wc -l)
+          echo "commits=$commits" >> "$GITHUB_OUTPUT"
+          echo "$commits commits in the last day"
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.commits != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain, GRUB and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm xorriso grub-pc-bin grub-common qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Boot test
+        run: ./scripts/boot-test.sh | tee build/boot.log
+
+      - name: Module and header checks
+        run: |
+          ./scripts/check-modules.sh
+          ./scripts/check-spdx.sh
+          ./scripts/kernel-size.sh | tee build/size.txt
+
+      - name: Build the ISO
+        run: |
+          mkdir -p build/iso/boot/grub
+          cp build/eris.elf build/iso/boot/eris.elf
+          cp boot/grub.cfg build/iso/boot/grub/grub.cfg
+          grub-mkrescue -o build/eris-nightly.iso build/iso
+
+      - name: Collect checksums
+        run: |
+          cd build
+          sha256sum eris.elf eris32.elf eris-nightly.iso > SHA256SUMS
+
+      - name: Write the notes
+        run: |
+          {
+            echo "Nightly build of \`main\` at $(git rev-parse --short HEAD), $(date -u '+%Y-%m-%d %H:%M UTC')."
+            echo
+            echo "## Commits since yesterday"
+            echo
+            git log --since='24 hours ago' --pretty='- %s'
+            echo
+            echo "## Boot"
+            echo
+            echo '```'
+            cat build/boot.log
+            echo '```'
+            echo
+            echo "## Size"
+            echo
+            echo '```'
+            cat build/size.txt
+            echo '```'
+          } > build/notes.md
+
+      - name: Publish the nightly
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: nightly
+          name: nightly
+          body_path: build/notes.md
+          prerelease: true
+          files: |
+            build/eris.elf
+            build/eris32.elf
+            build/eris-nightly.iso
+            build/SHA256SUMS

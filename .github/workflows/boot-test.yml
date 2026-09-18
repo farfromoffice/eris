@@ -1,0 +1,33 @@
+name: boot test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  qemu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Boot the kernel
+        run: ./scripts/boot-test.sh
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serial-log
+          path: build/boot.log
+          retention-days: 7

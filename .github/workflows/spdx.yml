@@ -1,0 +1,14 @@
+name: spdx
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  headers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check SPDX headers
+        run: ./scripts/check-spdx.sh

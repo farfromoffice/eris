@@ -1,0 +1,42 @@
+name: isr abi
+
+on:
+  pull_request:
+    paths:
+      - 'kernel/cpu/isr.asm'
+      - 'include/eris/irq.hpp'
+      - 'kernel/cpu/idt.cpp'
+  workflow_dispatch:
+
+jobs:
+  register-frame:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm
+
+      - name: Register pushes must match the Registers struct
+        run: |
+          pushes=$(grep -c '^    push r' kernel/cpu/isr.asm)
+          fields=$(sed -n '/struct Registers/,/};/p' include/eris/irq.hpp \
+                   | grep -o 'r[a-z0-9]*' | wc -l)
+          echo "isr.asm pushes $pushes registers, Registers names $fields"
+          if [[ $pushes -ne 15 ]]; then
+            echo "the common stub no longer pushes the 15 general purpose registers" >&2
+            exit 1
+          fi
+
+      - name: Stub table must cover every vector
+        run: |
+          make
+          nm build/eris.elf | grep -q 'isr_stub_table'
+          stubs=$(nm build/eris.elf | grep -c ' isr_stub_[0-9]*$')
+          echo "the image carries $stubs interrupt stubs"
+          if [[ $stubs -ne 256 ]]; then
+            echo "expected one stub per vector" >&2
+            exit 1
+          fi

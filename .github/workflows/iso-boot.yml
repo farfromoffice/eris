@@ -1,0 +1,44 @@
+name: iso boot
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  grub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain, GRUB and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm xorriso grub-pc-bin grub-common qemu-system-x86
+
+      - name: Build the ISO
+        run: |
+          make
+          mkdir -p build/iso/boot/grub
+          cp build/eris.elf build/iso/boot/eris.elf
+          cp boot/grub.cfg build/iso/boot/grub/grub.cfg
+          grub-mkrescue -o build/eris.iso build/iso
+
+      - name: Boot from the ISO
+        run: |
+          timeout 60 qemu-system-x86_64 \
+            -cdrom build/eris.iso \
+            -serial file:build/iso-boot.log \
+            -display none \
+            -no-reboot \
+            -m 512M || true
+          cat build/iso-boot.log
+          grep -q "builtin modules registered" build/iso-boot.log
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iso-boot-log
+          path: build/iso-boot.log

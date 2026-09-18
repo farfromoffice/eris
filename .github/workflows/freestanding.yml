@@ -1,0 +1,54 @@
+name: freestanding
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  environment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm
+
+      - name: No hosted headers
+        run: |
+          allowed='cstddef|cstdint'
+          status=0
+          while IFS= read -r hit; do
+            header=$(sed 's/.*#include <\([^>]*\)>.*/\1/' <<<"$hit")
+            if [[ $header == *"/"* || $header =~ ^eris ]]; then
+              continue
+            fi
+            if [[ ! $header =~ ^($allowed)$ ]]; then
+              echo "$hit" >&2
+              status=1
+            fi
+          done < <(grep -rn '#include <' include kernel modules)
+          [[ $status -eq 0 ]] && echo "only freestanding headers are used"
+          exit $status
+
+      - name: Image must not pull in libc or the unwinder
+        run: |
+          make
+          status=0
+          for symbol in malloc free printf __gxx_personality_v0 _Unwind_Resume; do
+            if nm build/eris.elf | grep -q " U $symbol$"; then
+              echo "image references $symbol" >&2
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Image must have no undefined symbols
+        run: |
+          undefined=$(nm -u build/eris.elf || true)
+          if [[ -n $undefined ]]; then
+            echo "$undefined" >&2
+            exit 1
+          fi
+          echo "fully linked"

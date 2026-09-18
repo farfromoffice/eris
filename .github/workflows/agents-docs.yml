@@ -1,0 +1,43 @@
+name: agent docs
+
+on:
+  pull_request:
+    paths:
+      - '.claude/**'
+      - '.codex/**'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+  workflow_dispatch:
+
+jobs:
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every skill needs a name and a description
+        run: |
+          status=0
+          for skill in .claude/skills/*/SKILL.md; do
+            head -1 "$skill" | grep -q '^---$' || { echo "$skill has no front matter" >&2; status=1; continue; }
+            grep -q '^name: ' "$skill" || { echo "$skill has no name" >&2; status=1; }
+            grep -q '^description: ' "$skill" || { echo "$skill has no description" >&2; status=1; }
+          done
+          exit $status
+
+      - name: Agent definitions need front matter
+        run: |
+          status=0
+          for agent in .claude/agents/*.md; do
+            grep -q '^name: ' "$agent" || { echo "$agent has no name" >&2; status=1; }
+            grep -q '^description: ' "$agent" || { echo "$agent has no description" >&2; status=1; }
+          done
+          exit $status
+
+      - name: Commands referenced by the docs must exist
+        run: |
+          status=0
+          for script in $(grep -oh 'scripts/[a-z-]*\.sh' AGENTS.md CLAUDE.md .claude/skills/*/SKILL.md .codex/prompts/*.md | sort -u); do
+            [[ -f $script ]] || { echo "documented $script is missing" >&2; status=1; }
+          done
+          exit $status

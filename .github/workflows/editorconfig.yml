@@ -1,0 +1,27 @@
+name: editorconfig
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  whitespace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install editorconfig-checker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y editorconfig-checker
+
+      - name: Check whitespace and line endings
+        run: editorconfig-checker
+
+      - name: No trailing whitespace in sources
+        run: |
+          if git grep -nI ' $' -- '*.cpp' '*.hpp' '*.asm' '*.ld' '*.sh'; then
+            echo "trailing whitespace above" >&2
+            exit 1
+          fi
+          echo "clean"

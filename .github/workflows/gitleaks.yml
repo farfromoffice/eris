@@ -1,0 +1,28 @@
+name: secrets
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: No mail addresses in the tree
+        run: |
+          if git grep -nIE '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}' -- \
+             ':!LICENSE' ':!.github/**' ':!*.md'; then
+            echo "drop the address, the tree keeps no contact details" >&2
+            exit 1
+          fi
+          echo "clean"

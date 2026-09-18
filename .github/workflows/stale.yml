@@ -1,0 +1,28 @@
+name: stale
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/stale@v9
+        with:
+          days-before-stale: 60
+          days-before-close: 14
+          stale-issue-label: stale
+          stale-pr-label: stale
+          exempt-issue-labels: 'pinned,roadmap,bug'
+          exempt-pr-labels: 'pinned'
+          stale-issue-message: >
+            No activity here for two months. Comment if this is still relevant,
+            otherwise it closes in two weeks.
+          stale-pr-message: >
+            This pull request has been idle for two months. Rebase on main and
+            say where it stands, otherwise it closes in two weeks.

@@ -1,0 +1,50 @@
+name: size
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm
+
+      - name: Build this branch
+        run: |
+          make
+          ./scripts/kernel-size.sh | tee branch-size.txt
+          cp build/eris.elf branch.elf
+
+      - name: Build the base branch
+        run: |
+          git checkout --force origin/${{ github.base_ref }}
+          make clean
+          make
+          size build/eris.elf | tail -1 | awk '{ print $4 }' > base-bytes.txt
+
+      - name: Compare
+        run: |
+          base=$(cat base-bytes.txt)
+          branch=$(size branch.elf | tail -1 | awk '{ print $4 }')
+          delta=$((branch - base))
+          {
+            echo "### kernel image size"
+            echo
+            echo "| build | bytes |"
+            echo "| --- | --- |"
+            echo "| base | $base |"
+            echo "| this branch | $branch |"
+            echo "| delta | $delta |"
+            echo
+            echo '```'
+            cat branch-size.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

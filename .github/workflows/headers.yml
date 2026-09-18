@@ -1,0 +1,41 @@
+name: headers
+
+on:
+  pull_request:
+    paths:
+      - 'include/**'
+      - 'modules/**'
+  workflow_dispatch:
+
+jobs:
+  standalone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Every header must compile on its own
+        run: |
+          status=0
+          for header in $(git ls-files 'include/**/*.hpp' 'modules/**/*.hpp'); do
+            if ! echo "#include \"$header\"" | \
+                 g++ -std=c++23 -ffreestanding -fno-exceptions -fno-rtti \
+                     -Wall -Wextra -Werror -Iinclude -Imodules \
+                     -x c++ - -fsyntax-only; then
+              echo "$header does not compile standalone" >&2
+              status=1
+            fi
+          done
+          exit $status
+
+      - name: Public headers need an include guard
+        run: |
+          status=0
+          for header in $(git ls-files 'include/**/*.hpp' 'modules/**/*.hpp'); do
+            grep -q '#pragma once' "$header" || { echo "$header has no pragma once" >&2; status=1; }
+          done
+          exit $status

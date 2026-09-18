@@ -1,0 +1,33 @@
+name: shellcheck
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+
+jobs:
+  scripts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Lint the helper scripts
+        run: shellcheck -x scripts/*.sh
+
+      - name: Every script must be executable
+        run: |
+          status=0
+          for file in scripts/*.sh; do
+            if [[ ! -x $file ]]; then
+              echo "$file is not executable" >&2
+              status=1
+            fi
+          done
+          exit $status

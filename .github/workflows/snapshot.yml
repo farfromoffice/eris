@@ -1,0 +1,43 @@
+name: snapshot
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Boot test
+        run: ./scripts/boot-test.sh | tee build/boot.log
+
+      - name: Summarise
+        run: |
+          {
+            echo "### snapshot $(git rev-parse --short HEAD)"
+            echo
+            echo '```'
+            ./scripts/kernel-size.sh
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: eris-snapshot-${{ github.sha }}
+          path: |
+            build/eris.elf
+            build/eris32.elf
+            build/boot.log
+          retention-days: 30

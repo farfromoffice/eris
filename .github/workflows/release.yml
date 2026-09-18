@@ -1,0 +1,51 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain, GRUB and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm xorriso grub-pc-bin grub-common qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Boot before publishing
+        run: ./scripts/boot-test.sh
+
+      - name: Build the ISO
+        run: |
+          mkdir -p build/iso/boot/grub
+          cp build/eris.elf build/iso/boot/eris.elf
+          cp boot/grub.cfg build/iso/boot/grub/grub.cfg
+          grub-mkrescue -o build/eris-${{ github.ref_name }}.iso build/iso
+
+      - name: Collect checksums
+        run: |
+          cd build
+          sha256sum eris.elf eris32.elf eris-${{ github.ref_name }}.iso > SHA256SUMS
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            build/eris.elf
+            build/eris32.elf
+            build/eris-${{ github.ref_name }}.iso
+            build/SHA256SUMS
+            LICENSE
+            NOTICE

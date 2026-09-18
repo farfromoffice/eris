@@ -1,0 +1,37 @@
+name: modules
+
+on:
+  pull_request:
+    paths:
+      - 'modules/**'
+      - 'include/eris/module.hpp'
+      - 'include/eris/export.hpp'
+      - 'kernel/module/**'
+  workflow_dispatch:
+
+jobs:
+  descriptors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm
+
+      - name: Check module descriptors
+        run: ./scripts/check-modules.sh
+
+      - name: Build and count descriptors
+        run: |
+          make
+          start=$(nm build/eris.elf | awk '$3 == "__eris_modules_start" { print $1 }')
+          end=$(nm build/eris.elf | awk '$3 == "__eris_modules_end" { print $1 }')
+          bytes=$((16#$end - 16#$start))
+          dirs=$(find modules -mindepth 1 -maxdepth 1 -type d | wc -l)
+          echo ".eris_modules spans $bytes bytes for $dirs module directories"
+          if [[ $bytes -eq 0 || $((bytes % dirs)) -ne 0 ]]; then
+            echo "a module directory did not produce a descriptor" >&2
+            exit 1
+          fi

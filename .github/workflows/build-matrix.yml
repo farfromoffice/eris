@@ -1,0 +1,34 @@
+name: build matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  compilers:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [g++-13, g++-14]
+        optimisation: ['-O0', '-O2', '-Os']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm ${{ matrix.compiler }}
+
+      - name: Build with ${{ matrix.compiler }} ${{ matrix.optimisation }}
+        run: |
+          make CXX=${{ matrix.compiler }} \
+               CXXFLAGS="-std=c++23 ${{ matrix.optimisation }} -ffreestanding -fno-exceptions \
+                         -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pic \
+                         -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -Wall -Wextra -Werror \
+                         -Wno-unused-parameter -fno-use-cxa-atexit -MMD -MP -Iinclude -Imodules"
+
+      - name: Report size
+        run: size build/eris.elf

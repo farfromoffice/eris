@@ -1,0 +1,39 @@
+boot:
+  - changed-files:
+      - any-glob-to-any-file: ['boot/**', 'linker/**']
+
+cpu:
+  - changed-files:
+      - any-glob-to-any-file: 'kernel/cpu/**'
+
+mm:
+  - changed-files:
+      - any-glob-to-any-file: 'kernel/mm/**'
+
+module framework:
+  - changed-files:
+      - any-glob-to-any-file: ['kernel/module/**', 'include/eris/module.hpp', 'include/eris/export.hpp']
+
+module:
+  - changed-files:
+      - any-glob-to-any-file: 'modules/**'
+
+api:
+  - changed-files:
+      - any-glob-to-any-file: 'include/eris/**'
+
+build:
+  - changed-files:
+      - any-glob-to-any-file: ['Makefile', 'scripts/**']
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ['**/*.md', 'LICENSE', 'NOTICE']
+
+agents:
+  - changed-files:
+      - any-glob-to-any-file: ['.claude/**', '.codex/**', 'AGENTS.md', 'CLAUDE.md']

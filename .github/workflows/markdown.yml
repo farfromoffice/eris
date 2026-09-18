@@ -1,0 +1,38 @@
+name: markdown
+
+on:
+  pull_request:
+    paths:
+      - '**.md'
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install markdownlint
+        run: npm install -g markdownlint-cli
+
+      - name: Lint the docs
+        run: markdownlint '**/*.md' --ignore node_modules
+
+  links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check relative links
+        run: |
+          status=0
+          while IFS= read -r file; do
+            while IFS= read -r target; do
+              [[ -e $target ]] || { echo "$file points at missing $target" >&2; status=1; }
+            done < <(grep -o '](\([^)h][^)]*\))' "$file" | sed 's/](\(.*\))/\1/' | cut -d'#' -f1 | grep -v '^$')
+          done < <(git ls-files '*.md')
+          exit $status
