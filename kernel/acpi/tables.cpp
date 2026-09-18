@@ -53,6 +53,7 @@ constinit phys_addr ioapic_address = 0;
 constinit u32 ioapic_gsi_base = 0;
 constinit phys_addr hpet_base = 0;
 constinit usize cpus = 0;
+constinit u32 cpu_apic_ids[max_cpus]{};
 
 constinit u32 irq_to_gsi[max_irqs]{};
 constinit bool irq_low[max_irqs]{};
@@ -123,8 +124,10 @@ void parse_madt(const Madt& madt)
         switch (static_cast<MadtType>(entry->type)) {
         case MadtType::LocalApic: {
             const auto* cpu = reinterpret_cast<const MadtLocalApic*>(entry);
-            if ((cpu->flags & 1) != 0 && cpus < max_cpus)
+            if ((cpu->flags & 1) != 0 && cpus < max_cpus) {
+                cpu_apic_ids[cpus] = cpu->apic_id;
                 ++cpus;
+            }
             break;
         }
         case MadtType::IoApic: {
@@ -257,6 +260,11 @@ bool irq_active_low(u8 irq)
 bool irq_level_triggered(u8 irq)
 {
     return irq < max_irqs && irq_level[irq];
+}
+
+u32 cpu_apic_id(usize index)
+{
+    return index < cpus ? cpu_apic_ids[index] : 0;
 }
 
 usize cpu_count()

@@ -17,6 +17,15 @@ constexpr u32 reg_lvt_timer = 0x320;
 constexpr u32 reg_timer_initial = 0x380;
 constexpr u32 reg_timer_current = 0x390;
 constexpr u32 reg_timer_divide = 0x3E0;
+constexpr u32 reg_icr_low = 0x300;
+constexpr u32 reg_icr_high = 0x310;
+
+constexpr u32 icr_init = 0x500;
+constexpr u32 icr_startup = 0x600;
+constexpr u32 icr_nmi = 0x400;
+constexpr u32 icr_level_assert = 1u << 14;
+constexpr u32 icr_all_excluding_self = 3u << 18;
+constexpr u32 icr_delivery_pending = 1u << 12;
 
 constexpr u32 lvt_masked = 1u << 16;
 constexpr u32 spurious_enable = 1u << 8;
@@ -114,6 +123,59 @@ bool lapic_init()
             lapic_id(),
             timer_hz / 1000000);
     return true;
+}
+
+void lapic_init_cpu()
+{
+    if (registers == nullptr)
+        return;
+
+    write_msr(apic_base_msr, read_msr(apic_base_msr) | apic_global_enable);
+    write(reg_spurious, spurious_enable | vector_spurious);
+}
+
+namespace {
+
+void send_ipi(u32 apic_id, u32 command)
+{
+    write(reg_icr_high, apic_id << 24);
+    write(reg_icr_low, command);
+
+    while ((read(reg_icr_low) & icr_delivery_pending) != 0)
+        asm volatile("pause");
+}
+
+} // namespace
+
+void lapic_send_init(u32 apic_id)
+{
+    send_ipi(apic_id, icr_init | icr_level_assert);
+}
+
+void lapic_send_startup(u32 apic_id, u8 page)
+{
+    send_ipi(apic_id, icr_startup | page);
+}
+
+void lapic_broadcast_ipi(u8 vector)
+{
+    if (registers == nullptr)
+        return;
+
+    write(reg_icr_high, 0);
+    write(reg_icr_low, icr_all_excluding_self | icr_level_assert | vector);
+
+    while ((read(reg_icr_low) & icr_delivery_pending) != 0)
+        asm volatile("pause");
+}
+
+void lapic_broadcast_nmi()
+{
+    if (registers == nullptr)
+        return;
+
+    write(reg_icr_high, 0);
+    write(reg_icr_low, icr_nmi | icr_level_assert | icr_all_excluding_self);
 }
 
 bool lapic_present()

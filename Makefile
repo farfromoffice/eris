@@ -22,9 +22,11 @@ ASMFLAGS := -f elf64
 LDFLAGS  := -n -nostdlib --no-warn-rwx-segments -T linker/kernel.ld
 
 CXX_SRCS := $(wildcard kernel/*.cpp) $(wildcard kernel/*/*.cpp) $(wildcard modules/*/*.cpp)
-ASM_SRCS := $(wildcard boot/*.asm) $(wildcard kernel/*/*.asm)
+TRAMPOLINE_SRC := kernel/cpu/trampoline.asm
+ASM_SRCS := $(filter-out $(TRAMPOLINE_SRC),$(wildcard boot/*.asm) $(wildcard kernel/*/*.asm))
 
-OBJS := $(patsubst %.cpp,build/%.o,$(CXX_SRCS)) $(patsubst %.asm,build/%.o,$(ASM_SRCS))
+OBJS := $(patsubst %.cpp,build/%.o,$(CXX_SRCS)) $(patsubst %.asm,build/%.o,$(ASM_SRCS)) \
+        build/trampoline.o
 DEPS := $(patsubst %.cpp,build/%.d,$(CXX_SRCS))
 
 .PHONY: all clean run run-serial iso
@@ -52,6 +54,15 @@ $(KERNEL32): $(KERNEL)
 build/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+# The application processor trampoline is a flat image copied to a fixed page,
+# so it is assembled raw and wrapped in an object rather than linked normally.
+build/trampoline.bin: $(TRAMPOLINE_SRC)
+	@mkdir -p $(dir $@)
+	$(ASM) -f bin $< -o $@
+
+build/trampoline.o: build/trampoline.bin
+	$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 $< $@
 
 build/%.o: %.asm
 	@mkdir -p $(dir $@)

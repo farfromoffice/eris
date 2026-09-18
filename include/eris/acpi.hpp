@@ -71,5 +71,6 @@ bool irq_active_low(u8 irq);
 bool irq_level_triggered(u8 irq);
 
 usize cpu_count();
+u32 cpu_apic_id(usize index);
 
 } // namespace eris::acpi
