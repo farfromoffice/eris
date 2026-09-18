@@ -4,9 +4,11 @@
 #pragma once
 
 #include <eris/compiler.hpp>
+#include <eris/irq.hpp>
 
 namespace eris {
 
 ERIS_NORETURN void panic(const char* fmt, ...);
+ERIS_NORETURN void panic_with_registers(const arch::Registers& regs, const char* fmt, ...);
 
-}
+} // namespace eris

@@ -6,4 +6,5 @@
 #define ERIS_PACKED   __attribute__((packed))
 #define ERIS_ALIGNED(n) __attribute__((aligned(n)))
 #define ERIS_NORETURN [[noreturn]]
+#define ERIS_NOINLINE __attribute__((noinline))
 #define ERIS_UNUSED   [[maybe_unused]]

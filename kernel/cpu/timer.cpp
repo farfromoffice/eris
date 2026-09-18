@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/cpu.hpp>
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
+#include <eris/panic.hpp>
 #include <eris/time.hpp>
 
 namespace eris {
@@ -10,9 +12,12 @@ namespace {
 
 constinit u64 tick_count = 0;
 
-void timer_tick(arch::Registers&)
+void timer_tick(arch::Registers& regs)
 {
     ++tick_count;
+
+    if (!arch::stack_sentinels_intact())
+        panic_with_registers(regs, "a kernel stack overflowed into its guard page");
 }
 
 }
