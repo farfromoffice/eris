@@ -5,9 +5,11 @@ boot, CPU tables, physical memory, heap, timer and a module framework. Anything
 that is not required to reach a usable module loader belongs in a module.
 
 Read this file before touching the tree. `CLAUDE.md` carries the live map of
-what currently exists and must be updated with every change. `CONTRIBUTING.md`
-says the same things for people rather than agents, `MAINTAINERS` says who looks
-after each area, and `CREDITS` lists who has worked on it.
+what currently exists and must be updated with every change. `ROADMAP.md` says
+what comes next and in which order, which is the fastest way to tell whether a
+change is early. `CONTRIBUTING.md` says the same things for people rather than
+agents, `MAINTAINERS` says who looks after each area, and `CREDITS` lists who has
+worked on it.
 
 ## Build and verify
 
@@ -23,6 +25,23 @@ make clean
 
 A change is not finished until `make` is clean and `./scripts/boot-test.sh`
 passes. The build runs with `-Wall -Wextra -Werror`, so a warning is a failure.
+
+## What this kernel will never have
+
+**No networking, ever.** eris is closed to the outside world on purpose. There
+will be no network card drivers, no protocol stack, no sockets, no remote shell,
+no remote debugging and no remote management. Do not add one, do not propose one
+as a module, and do not leave a hook for one in an API you design. The only ways
+in and out of the machine are its console, its disks and its removable media, and
+anything that needs data from elsewhere gets it by having that data written onto
+a disk image beforehand.
+
+This also rules out anything that reaches outward on its own: telemetry, update
+checks, crash reporting, license checks, clock synchronisation over a wire.
+
+If a task looks like it needs the network, it is the wrong task. Say so instead
+of finding a way around it. `ROADMAP.md` lists this under non goals along with
+vendor firmware blobs, which are out for the same reason.
 
 ## Environment rules
 
@@ -121,6 +140,17 @@ module comes up instead of repainting over it.
 
 Never set the commit author identity by hand and never add trailer lines that
 credit tooling.
+
+## Releases
+
+Every release has a version and a code name, both living in
+`include/eris/version.hpp` and nowhere else. The banner, the tag and the release
+title all read from there: `eris 0.1 "Dysnomia"`, tag `v0.1`, title
+`eris 0.1 Dysnomia`.
+
+Code names come from the far solar system, the bodies out past Neptune the
+kernel takes its own name from. A name is chosen when the milestone opens, and it
+is never reused. `ROADMAP.md` holds the assigned list.
 
 ## Pull requests
 

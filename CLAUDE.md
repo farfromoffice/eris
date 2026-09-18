@@ -43,6 +43,20 @@ linker/kernel.ld     image layout, module and symbol sections
 scripts/             build and CI helpers
 ```
 
+## Hard limits of the project
+
+No networking of any kind is ever added: no drivers, no stack, no sockets, no
+remote access, nothing that phones home. The machine talks to its console, its
+disks and its removable media, and to nothing else. `AGENTS.md` and the non goals
+section of `ROADMAP.md` say this at length, and a task that seems to need the
+network is a task to push back on.
+
+## Releases
+
+`include/eris/version.hpp` is the single source for the version and the code
+name, and the banner prints both. Release 0.1 is `Dysnomia`, and `ROADMAP.md`
+holds the names assigned to later milestones.
+
 ## Boot order
 
 `_start` (boot/head.asm) clears `.bss`, identity maps the first GiB with 2 MiB
@@ -50,7 +64,8 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 
 `start_kernel` in `kernel/main.cpp` runs in this order and the order matters:
 
-1. `serial_init` so panics have somewhere to go
+1. `serial_init` so panics have somewhere to go, then the banner from
+   `eris/version.hpp`
 2. `arch::gdt_init`, `arch::idt_init`, `arch::pic_init`
 3. `mm::page_alloc_init` with the multiboot magic and info pointer
 4. `mm::heap_init`, which takes 512 contiguous pages
@@ -65,6 +80,7 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | Header | What it gives you |
 | --- | --- |
 | `eris/types.hpp` | `u8`..`u64`, `usize`, `phys_addr`, `page_size` |
+| `eris/version.hpp` | Version numbers, code name, arch and language strings |
 | `eris/compiler.hpp` | `ERIS_PACKED`, `ERIS_ALIGNED`, `ERIS_NORETURN` |
 | `eris/console.hpp` | `Console` interface, register and unregister, `console_write` |
 | `eris/printk.hpp` | `pr_debug` `pr_info` `pr_warn` `pr_err`, `vprintk` |

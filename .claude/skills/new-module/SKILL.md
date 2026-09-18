@@ -14,6 +14,10 @@ console or the page allocator, belongs in `kernel/`. Everything else is a module
 Pick the dependencies before writing code. A dependency is another module name,
 the framework loads it first and refcounts it.
 
+A module that talks to a network, or that reaches outside the machine in any
+way, is not written. eris has no networking by design, see the non goals in
+`ROADMAP.md`.
+
 ## Scaffold
 
 ```

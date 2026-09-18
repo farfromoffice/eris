@@ -52,6 +52,14 @@ Then implement the driver as a class, expose its ABI as `extern "C"` functions,
 publish them with `ERIS_EXPORT_SYMBOL`, and make `exit` undo everything `init`
 did.
 
+## What will not be accepted
+
+eris has no networking and never will: no network drivers, no protocol stack, no
+sockets, no remote access, no telemetry and no update checks. The machine is
+closed to the outside world by design, and a patch that opens it is refused
+regardless of quality. Vendor firmware blobs are out for the same reason.
+`ROADMAP.md` lists the non goals in full.
+
 ## Code
 
 * Four spaces, 100 column soft limit, `.clang-format` decides the rest. Run

@@ -37,3 +37,14 @@ carries an SPDX tag.
 `CONTRIBUTING.md` for the workflow, `MAINTAINERS` for who looks after which
 subsystem, `CODE_OF_CONDUCT.md` for how threads are expected to read, `CREDITS`
 for who has worked on this.
+
+## Not a goal
+
+eris has no networking and will not get any: no drivers, no stack, no sockets, no
+remote access, nothing that phones home. Data comes in on a disk image and leaves
+the same way.
+
+## Roadmap
+
+`ROADMAP.md` compares the tree against kernels that already went this way and
+lays out the phases, from surviving a fault to loadable modules and userspace.

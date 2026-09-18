@@ -13,8 +13,10 @@ This directory holds prompts for recurring work:
 | `prompts/review.md` | Reviewing a diff against the tree rules |
 | `prompts/update-map.md` | Bringing `CLAUDE.md` and the agent files back in line |
 
-Two standing rules, because they are easy to miss:
+Three standing rules, because they are easy to miss:
 
+* eris has no networking and never will. No drivers, no stack, no sockets, no
+  remote access, nothing that phones home.
 * A change that touches a public header, the module framework, the boot order,
   the linker script or the set of modules updates `CLAUDE.md` in the same branch.
 * A change that makes a prompt here, or a skill or agent under `.claude/`,

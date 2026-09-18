@@ -34,6 +34,11 @@ Check, in this order:
 7. **Build reality.** Run `make` and `./scripts/boot-test.sh` when the diff could
    affect boot, and report what they say.
 
+Refuse outright, before any other review, anything that adds networking: a
+network driver, a protocol stack, a socket syscall, remote access, telemetry or
+an update check. eris is closed to the outside world and that is not a tradeoff
+to weigh.
+
 Be concrete. Name the failure: what input or state leads to what wrong outcome.
 A finding you cannot justify with a path through the code does not go in the
 report.

@@ -105,6 +105,7 @@ S:	Maintained
 F:	AGENTS.md
 F:	CLAUDE.md
 F:	README.md
+F:	ROADMAP.md
 F:	.claude/
 F:	.codex/
 P:	CLAUDE.md is the live map of the tree. If a change makes a line there

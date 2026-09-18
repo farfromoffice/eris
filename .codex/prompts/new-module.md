@@ -2,6 +2,9 @@
 
 Add `$ARGUMENTS` as a module under `modules/`.
 
+Networking is a non goal: no network drivers, no stack, no sockets, no remote
+access. If that is what was asked for, say so and stop.
+
 First decide whether it really is a module. Anything that has to run before
 `module_init_builtin` belongs in `kernel/`, say so and stop.
 
