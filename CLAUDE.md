@@ -101,10 +101,19 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   the section needs `KEEP` in the linker script.
 * Exported symbols live in `.eris_symtab` inside `.data`, because the macro
   initialises them at runtime through `.init_array`.
-* `.bss` is cleared in the boot stub, not in `call_global_ctors`. The stack and
-  the page tables live in `.bss` and are already in use by then.
+* `.bss` is cleared in the boot stub, not in `call_global_ctors`. The stack, the
+  page tables and the allocator bitmap live in `.bss` and are already in use by
+  then. The stub clears the direction flag first, because multiboot leaves it
+  undefined and both `rep stosb` and the C++ ABI expect it clear.
 * The page allocator manages the first GiB only, because that is all the boot
-  stub maps. Its bitmap sits right after `__kernel_end`.
+  stub maps. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
+  whatever sits after `__kernel_end`.
+* `page_alloc_init` reserves the low megabyte, the kernel image and the data the
+  bootloader left behind, the multiboot info block and the module strings
+  included. Handing those pages out corrupts the memory map while it is read.
+* Global `operator new` and `delete` are wired to `kmalloc` and `kfree` and are
+  `noexcept`. A `new` expression returns `nullptr` when the heap is exhausted,
+  and using it before `heap_init` is a null dereference.
 * The heap is 512 pages, 2 MiB, first fit with block merging. It never grows.
 * Fixed limits: 64 modules, 4 consoles, 8 keyboard subscribers, 16 IRQ lines.
 * Interrupt vectors 0 to 31 panic, 32 to 47 dispatch to IRQ handlers and send an

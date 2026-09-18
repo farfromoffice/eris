@@ -9,7 +9,8 @@ no formatting nits the formatter already handles.
 Check in this order:
 
 1. Freestanding environment: hosted headers, libc, exceptions, RTTI, SSE, or a
-   bare `new`, which returns `nullptr` here.
+   `new` whose result is never checked. It is `noexcept` and backed by `kmalloc`,
+   so it returns `nullptr` when the heap is out or not up yet.
 2. Interrupt safety: no allocation, no blocking, register frame matching
    `kernel/cpu/isr.asm`, end of interrupt on every IRQ path.
 3. Module lifecycle: init returns an error instead of panicking, exit undoes

@@ -31,9 +31,10 @@ no red zone. Only these headers from the toolchain are allowed: `<cstddef>` and
 `<cstdint>`, both already pulled in by `include/eris/types.hpp`. Everything else
 comes from the tree.
 
-Global `operator new` returns `nullptr` on purpose. Allocate with `kmalloc`,
-`kzalloc` and `kfree` from `<eris/mm.hpp>`, or with the page allocator for page
-granular memory.
+Global `operator new` is wired to `kmalloc` and is `noexcept`, so a failed
+allocation hands back `nullptr` instead of throwing. Every `new` expression has
+to check the result, and nothing may allocate before `heap_init` runs. For page
+granular memory go to the page allocator directly.
 
 The boot stub identity maps the first gigabyte with 2 MiB pages. Physical and
 virtual addresses are the same below that limit, and the page allocator refuses

@@ -14,8 +14,9 @@ nothing about style the formatter already enforces, and do not praise.
 Check, in this order:
 
 1. **Freestanding environment.** Hosted headers, libc calls, exceptions, RTTI,
-   floating point or SSE. Global `operator new` returns `nullptr`, so any `new`
-   is a null dereference waiting to happen.
+   floating point or SSE. Global `operator new` goes through `kmalloc` and is
+   `noexcept`, so an unchecked `new` result is a null dereference waiting to
+   happen, and any allocation before `heap_init` is one for certain.
 2. **Interrupt safety.** Handlers must not allocate, block or take long. The
    register frame in `include/eris/irq.hpp` must match the pushes in
    `kernel/cpu/isr.asm`. Every IRQ path needs its end of interrupt.
