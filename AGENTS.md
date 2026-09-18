@@ -57,9 +57,16 @@ allocation hands back `nullptr` instead of throwing. Every `new` expression has
 to check the result, and nothing may allocate before `heap_init` runs. For page
 granular memory go to the page allocator directly.
 
-The boot stub identity maps the first gigabyte with 2 MiB pages. Physical and
-virtual addresses are the same below that limit, and the page allocator refuses
-to hand out anything above it. Do not assume a higher half mapping.
+The kernel builds its own page tables in `paging_init`. The first gigabyte is a
+direct map that the allocator reaches every frame through, physical and virtual
+addresses are still the same there, and the page allocator refuses to hand out
+anything above it. Do not assume a higher half mapping, and do not open code the
+conversion: `phys_to_virt` and `virt_to_phys` exist for it.
+
+Kernel text is read execute and everything else is no execute, with `CR0.WP`
+set, so a stray write through a code pointer faults in ring 0 as well. Device
+memory is reached with `mm::map_device`, never by casting a physical address,
+and the virtual space above the direct map belongs to `vmalloc_reserve`.
 
 ## Code style
 

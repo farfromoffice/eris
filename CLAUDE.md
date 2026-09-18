@@ -68,10 +68,12 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
    `eris/version.hpp`, then `cmdline_init`
 2. `arch::gdt_init`, `arch::tss_init`, `arch::idt_init`, `arch::pic_init`
 3. `mm::page_alloc_init` with the multiboot magic and info pointer
-4. `mm::heap_init`, which takes 512 contiguous pages
-5. `timer_init(100)` then `arch::sti`
-6. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
-7. `report_modules`, then the fault injection switch if the command line asked
+4. `mm::paging_init`, which builds the kernel page tables, applies W^X and turns
+   the stack guards into holes
+5. `mm::heap_init`, which reserves virtual space and commits the first 2 MiB
+6. `timer_init(100)` then `arch::sti`
+7. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
+8. `report_modules`, then the fault injection switch if the command line asked
    for one, then an idle `hlt` loop
 
 Nothing before step 3 may allocate. Nothing before step 1 may print.
@@ -92,6 +94,7 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/printk.hpp` | `pr_debug` `pr_info` `pr_warn` `pr_err`, `vprintk` |
 | `eris/panic.hpp` | `panic`, never returns |
 | `eris/mm.hpp` | page allocator, `heap_init`, `kmalloc` `kzalloc` `kfree` |
+| `eris/paging.hpp` | `AddressSpace`, `PageFlags`, `vmalloc_reserve`, `map_device`, `region_name`, `phys_to_virt` |
 | `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state |
 | `eris/export.hpp` | `ERIS_EXPORT_SYMBOL`, `symbol_lookup` |
 | `eris/irq.hpp` | `Registers`, `irq_register`, mask, unmask, eoi, table init |
@@ -121,10 +124,11 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * Vectors 2, 8 and 18 run on IST stacks 2, 1 and 3, because they are the faults
   that can arrive when the kernel stack is already broken. Every other vector
   uses the interrupted stack.
-* The boot stack and each exception stack have a guard page below them, filled
-  with `0xA5`. Nothing unmaps them yet, so an overflow is detected rather than
-  trapped: the timer tick checks the sentinel window and `panic` checks the full
-  page. The page tables sit above the stack so an overflow hits the guard first.
+* The boot stack and each exception stack have an unmapped guard page below
+  them. An overflow faults on the instruction that caused it, and because the
+  fault frame cannot be pushed either, the report comes from the double fault
+  handler, which names the stack. The `0xA5` pattern only covers the window
+  before `paging_init` runs.
 * The image is linked three times. The first pass exists so `scripts/gen-ksyms.sh`
   can read its symbols, the second carries that table, and the third regenerates
   it because adding the table moved every address after it. The kernel builds
@@ -144,8 +148,26 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   page tables and the allocator bitmap live in `.bss` and are already in use by
   then. The stub clears the direction flag first, because multiboot leaves it
   undefined and both `rep stosb` and the C++ ABI expect it clear.
-* The page allocator manages the first GiB only, because that is all the boot
-  stub maps. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
+* The kernel runs on page tables it built itself after `paging_init`. The boot
+  stub's tables only exist to reach that point.
+* Address space layout: the first GiB is a direct map, writable and never
+  executable, because the allocator reaches every frame through it. The kernel
+  image inside it is remapped with 4 KiB pages carrying real permissions: text
+  read execute, rodata read only, data and bss writable and no execute. The
+  range from 1 GiB to 2 GiB is the vmalloc area, empty until something reserves
+  part of it, and every reservation gets a guard page after it.
+* `CR0.WP` and `EFER.NXE` are set in `paging_init`. Without the first, ring 0
+  writes through read only pages; without the second, the NX bit is ignored.
+* `phys_to_virt` and `virt_to_phys` are the identity today. They exist so the
+  higher half move is one edit rather than a hunt, and nothing should open code
+  the conversion.
+* Device memory is reached through `mm::map_device`, which returns an uncached
+  window in the vmalloc area. A driver never touches a page table and never
+  assumes a physical address is mapped.
+* The heap reserves 64 MiB of virtual space and commits 2 MiB at a time. It
+  grows when an allocation does not fit and never shrinks.
+* The page allocator manages the first GiB only, because that is all the direct
+  map covers. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
   whatever sits after `__kernel_end`.
 * `page_alloc_init` reserves the low megabyte, the kernel image and the data the
   bootloader left behind, the multiboot info block and the module strings
@@ -173,6 +195,11 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * `pr_*` before `serial_init` writes into a console list with zero entries, so
   the output disappears silently.
 * Anything called from an interrupt handler must not use `kmalloc`.
+* Splitting a 2 MiB mapping has to carry the old flags across, or the fresh
+  table silently drops `NX`.
+* Taking the address of a function in an anonymous namespace can name a clone
+  that the linker never emits, which shows up as an undefined reference at link
+  time rather than an error where it was written.
 * A write to address zero is not a fault: the identity map covers the first page.
   Use an address above the mapped gigabyte to provoke a page fault.
 * Recursion written to overflow the stack gets turned into a loop by the
@@ -189,12 +216,14 @@ make
 
 ```
 ./scripts/faultinject.sh
+qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append mmtest
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning
 and on an empty serial log. `faultinject.sh` does the opposite: it drives
-`unmapped`, `opcode`, `divide`, `doublefault`, `stack` and `panic` through the
-panic path and fails if any of them does not report a panic with a backtrace.
+`unmapped`, `opcode`, `divide`, `doublefault`, `stack`, `text`, `rodata` and
+`panic` through the panic path and fails if any of them does not report a panic
+with a backtrace. The `mmtest` switch runs the heap growth check at boot.
 Paste both in the pull request.
 
 ## License

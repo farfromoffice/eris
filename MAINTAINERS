@@ -41,8 +41,11 @@ M:	farfromoffice
 S:	Maintained
 F:	kernel/mm/
 F:	include/eris/mm.hpp
+F:	include/eris/paging.hpp
 P:	The allocator only covers the first mapped gigabyte. Nothing may
-	allocate before heap_init runs.
+	allocate before heap_init runs, and nothing maps device memory by
+	hand when map_device exists.
+T:	./scripts/faultinject.sh
 
 MODULE FRAMEWORK
 M:	farfromoffice

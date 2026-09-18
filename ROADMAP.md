@@ -17,7 +17,7 @@ here.
 4. [Non goals](#non-goals)
 5. [Gap table](#gap-table)
 6. [Phase 1: survive a fault](#phase-1-survive-a-fault) (done)
-7. [Phase 2: virtual memory](#phase-2-virtual-memory)
+7. [Phase 2: virtual memory](#phase-2-virtual-memory) (mostly done)
 8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time)
 9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu)
 10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling)
@@ -43,6 +43,10 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga`,
 `keyboard`, `desktop`.
+
+The kernel builds its own page tables at boot: the first gigabyte stays directly
+mapped for the allocator, the image carries real permissions, device memory is
+mapped on request and the heap grows by committing pages into a reservation.
 
 A fault is survivable as of phase 1: double fault, NMI and machine check run on
 their own stacks, the guard pages catch an overflow, and a panic prints the
@@ -125,7 +129,7 @@ either.
 | Area | eris today | Reference kernels | Phase |
 | --- | --- | --- | --- |
 | Fault survival | IST stacks, guard pages, symbolised backtrace, fault injection | Separate stacks for double fault and NMI, symbolised backtrace | done |
-| Virtual memory | Identity map of the first GiB, no page table API | Per address space page tables, W^X, guard pages, MMIO windows | 2 |
+| Virtual memory | Own page tables, W^X, vmalloc, growable heap, device windows | Per address space page tables, higher half, demand paging | mostly done |
 | Interrupt controller | Legacy PIC, PIT tick only | ACPI tables, local APIC, IO APIC, MSI, HPET or TSC deadline | 3 |
 | Concurrency | Interrupt masking, plain integer refcounts | Spinlocks, IRQ safe locks, atomics, per CPU areas | 4 |
 | Multiprocessing | One CPU | AP trampoline, per CPU GDT and TSS, IPIs, TLB shootdown | 4 |
@@ -185,55 +189,56 @@ the optimiser unless the frame address is handed to it as an opaque value.
 ## Phase 2: virtual memory
 
 **Goal.** The kernel manages its own address space instead of living inside the
-identity map the boot stub made.
-
-**Why now.** Nothing can map device memory, the heap cannot grow, code is
-writable, and module images in phase 6 need somewhere to live with correct
-protections.
+identity map the boot stub made. Landed on main except for the two items below,
+ships in 0.2, Sedna.
 
 **Work**
 
-- [ ] `kernel/mm/paging.cpp`, `include/eris/paging.hpp`:
-
-  ```cpp
-  namespace eris::mm {
-  enum class PageFlags : u64 { None = 0, Write = 1, User = 2, NoExecute = 4, Global = 8, NoCache = 16 };
-  class AddressSpace {
-  public:
-      static AddressSpace& kernel();
-      bool map(virt_addr va, phys_addr pa, usize length, PageFlags flags);
-      bool unmap(virt_addr va, usize length);
-      bool protect(virt_addr va, usize length, PageFlags flags);
-      phys_addr translate(virt_addr va) const;
-      void activate();
-  };
-  }
-  ```
-
+- [x] ~~`kernel/mm/paging.cpp`, `include/eris/paging.hpp`: `AddressSpace` with
+  `map`, `unmap`, `protect`, `translate`, `mapped` and `activate`, over 4 KiB
+  pages, splitting a 2 MiB mapping when a single page inside it needs its own
+  permissions.~~
 - [ ] Higher half: link the kernel at `0xFFFFFFFF80000000`, keep a direct physical
   map at `0xFFFF800000000000` so the allocator can still reach every frame, and
   drop the low identity map once the switch is done.
-- [ ] `kernel/mm/vmalloc.cpp`: a virtual address range allocator for stacks, module
-  images and MMIO windows, with guard pages between regions.
-- [ ] W^X: `.text` read execute, `.rodata` read only, `.data` and `.bss` no execute.
-  Applied right after the higher half switch, enforced for module images too.
-- [ ] Heap growth: `heap_init` reserves virtual space and commits pages on demand,
-  instead of a fixed 2 MiB arena.
-- [ ] `mm::map_device(phys_addr, usize)` returning a mapped window with caching
-  disabled, exported so a driver never touches a page table.
-- [ ] Page fault handler that separates a real bug from a demand paged region, and
-  prints which region the address belongs to.
-- [ ] Slab or size class allocator on top of the heap for the objects the kernel
-  allocates constantly, threads and inodes in later phases.
 
-**Done when.** The kernel runs from the higher half, writing to `.text` faults,
-a module maps a device window by physical address, the heap grows past its
-initial reservation, and a stack overflow hits a guard page rather than the
-neighbouring allocation.
+  Deferred, not dropped. QEMU's `-kernel` loader only accepts a 32-bit ELF, and
+  a virtual base that high cannot be written in one, so moving the kernel means
+  moving the test path to a GRUB image or writing a loader stub first. It goes
+  with the boot work rather than ahead of it. `phys_to_virt` and `virt_to_phys`
+  already exist as the identity, so the move is one edit in `paging.hpp` plus
+  the boot stub.
+- [x] ~~`kernel/mm/vmalloc.cpp`: a virtual range allocator above the directly
+  mapped gigabyte, with a guard page after every reservation, used by the heap
+  and by device windows.~~
+- [x] ~~W^X: `.text` read execute, `.rodata` read only, `.data` and `.bss` writable
+  and never executable, with `CR0.WP` set so ring 0 does not get a free pass and
+  `EFER.NXE` enabled so the bit means something.~~
+- [x] ~~Heap growth: the heap reserves 64 MiB of virtual space, commits 2 MiB, and
+  maps more when an allocation does not fit, instead of living in a fixed
+  arena.~~
+- [x] ~~`mm::map_device(phys_addr, usize)` returning an uncached window, and
+  `unmap_device` to give it back. The VGA module now reaches its framebuffer
+  through it rather than trusting a raw address.~~
+- [x] ~~Page fault reports say which region the address belongs to: the null page,
+  the kernel image, the direct map, the vmalloc area or nothing mapped.~~
+- [x] ~~Stack guards became real holes. An overflow faults on the instruction that
+  caused it, the double fault handler names the stack, and the poison pattern is
+  only there for the window before paging comes up.~~
+- [ ] Slab or size class allocator on top of the heap. Deferred to phase 5, which
+  is the first time anything allocates the same object constantly.
 
-**Traps.** The switch to the higher half has to happen with both mappings valid,
-then jump, then drop the old one. Getting the order wrong triple faults with the
-same symptom as a bad page table, which is why phase 1 comes first.
+**Done when.** Writing to `.text` faults, a module maps a device window by
+physical address, the heap grows past its initial commit, and a stack overflow
+hits a guard page rather than the neighbouring allocation. Done: `fault=text`,
+`fault=rodata` and `fault=stack` all report, `mmtest` shows the heap growing
+from 2 MiB to 6 MiB and back, and the VGA module runs through `map_device`.
+
+**Traps.** Splitting a 2 MiB page has to copy the flags of the mapping it
+replaces, or the new table quietly loses `NX` and W^X stops meaning anything.
+`CR0.WP` is the difference between a read only page and a suggestion. Taking the
+address of a function in an anonymous namespace can reference a clone the
+linker never emits, which is why the write test targets `kernel_main`.
 
 ## Phase 3: modern interrupts and time
 
@@ -1218,7 +1223,7 @@ Not a phase, work that grows with each of the above.
 
 ```
 1  fault survival ......... done
-2  virtual memory ......... 1 makes its failures debuggable
+2  virtual memory ......... done except the higher half move
 3  apic and time .......... needs 2 for MMIO mapping
 4  locks and SMP .......... needs 3
 5  threads ................ needs 4
@@ -1248,7 +1253,7 @@ tag and never reused.
 | Version | Code name | Contents | State |
 | --- | --- | --- | --- |
 | 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, three built in modules | released |
-| 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, higher half, W^X, real page table API | phase 1 landed |
+| 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | phase 1 and most of 2 landed |
 | 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | planned |
 | 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | planned |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | planned |
