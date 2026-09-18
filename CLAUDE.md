@@ -64,19 +64,21 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 
 `start_kernel` in `kernel/main.cpp` runs in this order and the order matters:
 
-1. `serial_init` so panics have somewhere to go, then the banner from
+1. `arch::percpu_setup(0, 0)` first, because everything that takes a lock asks
+   which CPU it is on
+2. `serial_init` so panics have somewhere to go, then the banner from
    `eris/version.hpp`, then `cmdline_init`
-2. `arch::gdt_init`, `arch::tss_init`, `arch::idt_init`, `arch::pic_init`
-3. `mm::page_alloc_init` with the multiboot magic and info pointer
-4. `mm::paging_init`, which builds the kernel page tables, applies W^X and turns
+3. `arch::gdt_init`, `arch::tss_init`, `arch::idt_init`, `arch::pic_init`
+4. `mm::page_alloc_init` with the multiboot magic and info pointer
+5. `mm::paging_init`, which builds the kernel page tables, applies W^X and turns
    the stack guards into holes
-5. `mm::heap_init`, which reserves virtual space and commits the first 2 MiB
-6. `acpi::init`, `arch::irq_init` and `clock_init`, in that order, because the
+6. `mm::heap_init`, which reserves virtual space and commits the first 2 MiB
+7. `acpi::init`, `arch::irq_init` and `clock_init`, in that order, because the
    controller and the clock both come out of the tables
-7. `timers_init` then `arch::sti`
-8. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
-9. `report_modules`, then the fault injection switch if the command line asked
-   for one, then an idle loop that drains deferred work and halts
+8. `timers_init`, `arch::sti`, then `arch::smp_init`
+9. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
+10. `report_modules`, then whichever self tests the command line asked for, then
+    an idle loop that drains deferred work and halts
 
 Nothing before step 3 may allocate. Nothing before step 1 may print.
 
@@ -103,6 +105,9 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
 | `eris/apic.hpp` | Local APIC, IO APIC, the vectors they use |
 | `eris/work.hpp` | `schedule_work`, `work_run_pending` |
+| `eris/lock.hpp` | `SpinLock`, `IrqSpinLock`, `RecursiveIrqLock`, guards |
+| `eris/atomic.hpp` | `Atomic<T>`, `RefCount`, `memory_barrier`, `cpu_relax` |
+| `eris/cpu.hpp` | Per CPU block, TSS, IST stacks, `smp_init`, `this_cpu` |
 | `eris/io.hpp` | `inb` `outb` `io_wait` `cli` `sti` `hlt` |
 | `eris/serial.hpp` | `serial_init` for the early console |
 | `eris/time.hpp` | `monotonic_ns`, `timer_after`, `timer_every`, `timer_cancel`, `udelay`, `ticks` |
@@ -214,6 +219,16 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   `vprintk` implements only `%c %s %d %i %u %x %X %p` with the `l` length. A
   width or a flag compiles cleanly and prints wrong.
 * Anything called from an interrupt handler must not use `kmalloc`.
+* An `IrqSpinLock` panics if the CPU holding it asks for it again. That is a
+  deadlock reported early, not a false alarm, so fix the call path rather than
+  reaching for the recursive lock. The console is the one place that genuinely
+  needs the recursive variant.
+* Per CPU state is reached with `arch::this_cpu()`, which is only valid after
+  `percpu_setup`. Before that, reading `gs:0` follows whatever the firmware left
+  at address zero and ends in a general protection fault.
+* The trampoline page is shared between cores coming up one at a time. A core
+  copies its identity out of it and acknowledges before the boot CPU reuses the
+  slots.
 * Splitting a 2 MiB mapping has to carry the old flags across, or the fresh
   table silently drops `NX`.
 * Taking the address of a function in an anonymous namespace can name a clone
@@ -237,6 +252,7 @@ make
 ./scripts/faultinject.sh
 qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append mmtest
 qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append timetest
+CPUS=8 ./scripts/smp-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning

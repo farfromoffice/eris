@@ -19,7 +19,7 @@ here.
 6. [Phase 1: survive a fault](#phase-1-survive-a-fault) (done)
 7. [Phase 2: virtual memory](#phase-2-virtual-memory) (mostly done)
 8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time) (done)
-9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu)
+9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu) (done)
 10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling)
 11. [Phase 6: loadable modules](#phase-6-loadable-modules)
 12. [Phase 7: buses and devices](#phase-7-buses-and-devices)
@@ -43,6 +43,9 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga`,
 `keyboard`, `desktop`.
+
+Every core the firmware reports is online as of phase 4, with per CPU
+descriptors, IRQ safe locks and atomic refcounts on the shared structures.
 
 Interrupts come through the IO APIC as of phase 3, time is a nanosecond clock
 from the HPET, and callbacks are deadlines rather than tick counts.
@@ -134,8 +137,8 @@ either.
 | Fault survival | IST stacks, guard pages, symbolised backtrace, fault injection | Separate stacks for double fault and NMI, symbolised backtrace | done |
 | Virtual memory | Own page tables, W^X, vmalloc, growable heap, device windows | Per address space page tables, higher half, demand paging | mostly done |
 | Interrupt controller | ACPI tables, local APIC, IO APIC, HPET clock, deadline timers | MSI, x2APIC, per CPU timers | mostly done |
-| Concurrency | Interrupt masking, plain integer refcounts | Spinlocks, IRQ safe locks, atomics, per CPU areas | 4 |
-| Multiprocessing | One CPU | AP trampoline, per CPU GDT and TSS, IPIs, TLB shootdown | 4 |
+| Concurrency | Spinlocks, IRQ safe locks, atomics, per CPU areas | Lock ordering rules, RCU style readers | done |
+| Multiprocessing | Every core online, IPIs, TLB shootdown | Per CPU scheduling, x2APIC | mostly done |
 | Scheduling | None, idle loop | Kernel threads, context switch, wait queues, preemption | 5 |
 | Loadable modules | Built in descriptors only | Relocatable images loaded at runtime, versioned ABI, initrd | 6 |
 | Device discovery | Hard coded ports | PCI enumeration, bus and driver matching, virtio, MSI | 7 |
@@ -290,43 +293,45 @@ easy to skip and produce a keyboard that works on QEMU and nowhere else.
 ## Phase 4: concurrency and more than one CPU
 
 **Goal.** Data structures are safe under real concurrency, and every core the
-firmware reports is running.
-
-**Why now.** Module refcounts are plain integers and the console list has no
-protection. Both are already wrong with interrupts alone.
+firmware reports is running. Landed on main, ships in 0.4, Orcus.
 
 **Work**
 
-- [ ] `include/eris/lock.hpp`:
-
-  ```cpp
-  namespace eris {
-  class SpinLock { public: void lock(); void unlock(); bool try_lock(); };
-  class IrqSpinLock { public: u64 lock(); void unlock(u64 flags); };
-  template<typename T> class Guarded;   // lock plus the data it protects
-  class SeqLock;
-  }
-  ```
-
-  with lock assertions and a held lock list per CPU in debug builds.
-- [ ] `include/eris/atomic.hpp`: the narrow set of atomics the kernel needs, built on
-  compiler builtins, plus `RefCount` used by the module framework.
-- [ ] `kernel/cpu/percpu.cpp`: per CPU area reached through `gs`, holding the CPU id,
-  the current thread pointer, the local APIC id, the TSS and the run queue.
-  `this_cpu()` for everything else.
-- [ ] `kernel/cpu/smp.cpp`: AP trampoline copied below 1 MiB, INIT and SIPI sequence,
-  per CPU GDT, IDT, TSS and stack, a barrier until every AP reports in.
-- [ ] IPIs: reschedule, TLB shootdown, panic stop, function call on a target CPU.
-- [ ] Retrofit the existing structures: module table under a lock, refcounts atomic,
-  console list under a lock, IRQ handler table published safely.
+- [x] ~~`include/eris/lock.hpp`: `SpinLock`, `IrqSpinLock` that saves and restores
+  the interrupt flag, a recursive variant for the console, and scoped guards for
+  all of them.~~
+- [x] ~~Lock assertions: an `IrqSpinLock` panics when the CPU holding it asks for
+  it again, which is how the trampoline handover race below was found.~~
+- [x] ~~`include/eris/atomic.hpp`: the narrow set of atomics the kernel needs and a
+  `RefCount` built on them. Module references are atomic now, not plain
+  integers.~~
+- [x] ~~`kernel/cpu/percpu.cpp`: a per CPU block reached through `gs`, holding the
+  index, the APIC id, the GDT and the TSS. The GDT and TSS became per CPU with
+  it, because one TSS cannot be loaded twice.~~
+- [x] ~~`kernel/cpu/smp.cpp` and `kernel/cpu/trampoline.asm`: the trampoline is
+  assembled flat, copied to a fixed page below a megabyte, and started with INIT
+  and STARTUP. Each core comes up in long mode on the kernel page tables with
+  its own stack and descriptors.~~
+- [x] ~~IPIs: a function call broadcast that waits for every core to finish, a TLB
+  shootdown that follows an unmap, and an NMI that stops the others when one
+  core panics.~~
+- [x] ~~Retrofit: the module table, the page allocator, the heap, the vmalloc
+  ranges, the timer queue, the work queue and the console all took locks.~~
+- [ ] x2APIC and per CPU run queues. The first waits for a machine that needs it,
+  the second for phase 5, which is what run queues are for.
 
 **Done when.** The kernel boots every CPU the MADT lists and prints them, a
 stress test hammering `module_get` and `module_put` from several cores keeps the
-refcount exact, and a panic on one core stops the others.
+refcount exact, and a panic on one core stops the others. Done: `./scripts/smp-test.sh`
+runs on 1, 2, 4 and 8 cores, 160000 refcount round trips at eight cores leave
+the count where it started, and a panic under SMP prints one readable report.
 
-**Traps.** The trampoline runs in real mode and has to be relocated and aligned
-correctly. Taking a lock in an interrupt handler that the interrupted code
-already holds deadlocks instantly, which is the reason `IrqSpinLock` exists.
+**Traps.** The trampoline page is shared, so a core has to copy its identity out
+of it before the boot CPU hands the slots to the next core. Without that two
+cores read the same index, share a per CPU block, and the lock assertions fire
+somewhere unrelated. The console needs a recursive lock because it is written to
+from inside functions that already hold it, and a panic takes it for the whole
+report or two cores interleave letter by letter.
 
 ## Phase 5: threads and scheduling
 
@@ -1223,7 +1228,7 @@ Not a phase, work that grows with each of the above.
 1  fault survival ......... done
 2  virtual memory ......... done except the higher half move
 3  apic and time .......... done
-4  locks and SMP .......... needs 3
+4  locks and SMP .......... done
 5  threads ................ needs 4
 6  loadable modules ....... needs 2, much better with 5
 7  buses and devices ...... needs 3 and 6
@@ -1253,7 +1258,7 @@ tag and never reused.
 | 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, three built in modules | released |
 | 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | phase 1 and most of 2 landed |
 | 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | landed |
-| 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | planned |
+| 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | phase 4 landed |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | planned |
 | 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | planned |
 | 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | planned |
