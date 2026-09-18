@@ -55,10 +55,16 @@ int load_dependencies(Module& module, usize depth)
         const int result = load_locked(*dep, depth + 1);
         if (result != 0)
             return result;
-
-        ++dep->refcount;
     }
     return 0;
+}
+
+// References are taken only once the module is Ready and dropped by
+// release_dependencies() on unload and no failure path has to undo them.
+void acquire_dependencies(const Module& module)
+{
+    for (usize i = 0; i < module.info->dep_count; ++i)
+        ++find(module.info->deps[i])->refcount;
 }
 
 int load_locked(Module& module, usize depth)
@@ -103,6 +109,7 @@ int load_locked(Module& module, usize depth)
         return result;
     }
 
+    acquire_dependencies(module);
     module.state = ModuleState::Ready;
     module.error = 0;
     pr_info("module %s %s loaded (%s)\n", module.info->name, module.info->version,
