@@ -31,3 +31,9 @@ make iso          # needs grub2-mkrescue and xorriso
 GPL-2.0-only. Copyright (C) 2026 farfromoffice. `LICENSE` holds the license text
 verbatim, `NOTICE` holds the filled in copyright notice, and every source file
 carries an SPDX tag.
+
+## Contributing
+
+`CONTRIBUTING.md` for the workflow, `MAINTAINERS` for who looks after which
+subsystem, `CODE_OF_CONDUCT.md` for how threads are expected to read, `CREDITS`
+for who has worked on this.

@@ -1,0 +1,27 @@
+This is a list of people who put work into eris. It is not a changelog and not
+an access list, MAINTAINERS says who looks after what today. Nobody is removed
+from here once they are in.
+
+Fields:
+
+	N: Name or handle
+	W: Web page
+	D: What they did
+	S: Status in the project
+
+----------
+
+N: farfromoffice
+D: Started the project
+D: Boot stub, long mode entry and image layout
+D: GDT, IDT, interrupt dispatch and the legacy PIC
+D: Physical page allocator and kernel heap
+D: Module framework, dependency resolution and the symbol export table
+D: VGA, keyboard and desktop modules
+D: Build system, helper scripts and continuous integration
+S: Active
+
+----------
+
+Nothing else is written here yet. If you send a change that lands, add yourself
+in the same branch, at the bottom, with what you worked on.
