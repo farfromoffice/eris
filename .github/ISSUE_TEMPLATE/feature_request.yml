@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 farfromoffice
+
+name: Feature request
+description: Propose new functionality or a design change.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What can't be done today or what is wrong with the current design?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: The smallest change that solves it. Interfaces, data structures, ownership.
+    validations:
+      required: true
+
+  - type: textarea
+    id: placement
+    attributes:
+      label: Why in the kernel?
+      description: |
+        The kernel provides mechanism; policy, UI and services belong in userspace.
+        If this needs to live in the kernel, say why.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered

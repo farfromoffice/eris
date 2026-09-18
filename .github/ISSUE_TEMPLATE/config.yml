@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 farfromoffice
+
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/farfromoffice/eris/security/advisories/new
+    about: Report privately. Do not open a public issue.

@@ -1,0 +1,81 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 farfromoffice
+
+name: Bug report
+description: Something in eris crashes, hangs or behaves wrong.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security issues don't belong here; use the private vulnerability report instead.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - boot
+        - cpu / interrupts
+        - memory
+        - module framework
+        - drivers (vga, keyboard, etc.)
+        - build
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected and what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: Exact commands, QEMU flags or hardware steps.
+      placeholder: |
+        make run-serial
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Serial log
+      description: Full output from boot to failure. Panics print register state; include all of it.
+      render: text
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      placeholder: git rev-parse --short HEAD
+    validations:
+      required: true
+
+  - type: dropdown
+    id: boot
+    attributes:
+      label: Boot method
+      options:
+        - QEMU -kernel
+        - QEMU + ISO (GRUB)
+        - real hardware
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Compiler, binutils, nasm and QEMU versions or the hardware model.
+      placeholder: |
+        g++ 14.2, binutils 2.42, nasm 2.16, qemu 9.2
+    validations:
+      required: true
