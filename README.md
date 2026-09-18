@@ -25,3 +25,9 @@ make run          # VGA window plus serial on stdout
 make run-serial   # serial only
 make iso          # needs grub2-mkrescue and xorriso
 ```
+
+## License
+
+GPL-2.0-only. Copyright (C) 2026 farfromoffice. `LICENSE` holds the license text
+verbatim, `NOTICE` holds the filled in copyright notice, and every source file
+carries an SPDX tag.
