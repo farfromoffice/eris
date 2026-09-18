@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make)",
+      "Bash(make clean)",
+      "Bash(make run-serial)",
+      "Bash(./scripts/boot-test.sh)",
+      "Bash(./scripts/check-spdx.sh)",
+      "Bash(./scripts/check-modules.sh)",
+      "Bash(./scripts/kernel-size.sh)",
+      "Bash(./scripts/new-module.sh:*)",
+      "Bash(nm:*)",
+      "Bash(readelf:*)",
+      "Bash(objdump:*)",
+      "Bash(size:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ],
+    "ask": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(qemu-system-x86_64:*)"
+    ]
+  }
+}
