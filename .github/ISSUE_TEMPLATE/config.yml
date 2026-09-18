@@ -6,3 +6,15 @@ contact_links:
   - name: Report a security vulnerability
     url: https://github.com/farfromoffice/eris/security/advisories/new
     about: Report privately. Do not open a public issue.
+  - name: How to contribute
+    url: https://github.com/farfromoffice/eris/blob/main/CONTRIBUTING.md
+    about: Build, test, commit format and what belongs in a module
+  - name: Who maintains what
+    url: https://github.com/farfromoffice/eris/blob/main/MAINTAINERS
+    about: Subsystems, their maintainers and the tests they expect
+  - name: How to work on the tree
+    url: https://github.com/farfromoffice/eris/blob/main/AGENTS.md
+    about: Build, style, module rules and commit format
+  - name: Current state of the kernel
+    url: https://github.com/farfromoffice/eris/blob/main/CLAUDE.md
+    about: Module table, public API, invariants

@@ -1,0 +1,38 @@
+name: Documentation
+description: Something in the docs or in the agent map is wrong or missing
+labels: [docs]
+body:
+  - type: dropdown
+    id: file
+    attributes:
+      label: Which file
+      options:
+        - README.md
+        - AGENTS.md
+        - CLAUDE.md
+        - .claude skills or agents
+        - .codex prompts
+        - Code comments or headers
+    validations:
+      required: true
+
+  - type: textarea
+    id: wrong
+    attributes:
+      label: What it says now
+    validations:
+      required: true
+
+  - type: textarea
+    id: right
+    attributes:
+      label: What it should say
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: stale-map
+    attributes:
+      label: Is this a stale map
+      options:
+        - label: CLAUDE.md describes something that no longer matches the tree

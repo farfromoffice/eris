@@ -1,0 +1,33 @@
+name: Core feature
+description: Ask for something in the kernel core, not a module
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you cannot do today
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What the kernel should provide
+      description: API shape, not implementation detail
+      render: cpp
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-core
+    attributes:
+      label: Why a module cannot do this
+      description: The core stays small, so this question decides the answer
+    validations:
+      required: true
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: What it breaks
+      description: Existing modules, invariants, boot order, image size

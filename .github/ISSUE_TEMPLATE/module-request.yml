@@ -1,0 +1,63 @@
+name: Module proposal
+description: Propose a new module for the tree
+labels: [module, proposal]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Module name
+      description: Lower case, this becomes the directory under modules/
+    validations:
+      required: true
+
+  - type: textarea
+    id: purpose
+    attributes:
+      label: What it drives
+      description: Hardware, protocol or feature
+    validations:
+      required: true
+
+  - type: textarea
+    id: abi
+    attributes:
+      label: Proposed ABI
+      description: The extern "C" functions other modules would call
+      render: cpp
+    validations:
+      required: true
+
+  - type: input
+    id: deps
+    attributes:
+      label: Dependencies
+      description: Existing module names it needs, comma separated
+
+  - type: dropdown
+    id: license
+    attributes:
+      label: License
+      options:
+        - GPL-2.0-only
+        - GPL-2.0-or-later
+        - MIT
+        - BSD-3-Clause
+        - Apache-2.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: core
+    attributes:
+      label: Does it need a core change
+      description: Say which kernel API is missing, if any
+
+  - type: checkboxes
+    id: rules
+    attributes:
+      label: Ground rules
+      options:
+        - label: State lives in a class, exit undoes what init did
+          required: true
+        - label: No allocation in interrupt handlers
+          required: true

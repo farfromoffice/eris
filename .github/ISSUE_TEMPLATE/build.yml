@@ -1,0 +1,36 @@
+name: Build or toolchain problem
+description: The tree does not build, or the build behaves differently on your setup
+labels: [build]
+body:
+  - type: input
+    id: compiler
+    attributes:
+      label: Compiler
+      description: Output of `g++ --version`, first line
+    validations:
+      required: true
+
+  - type: input
+    id: binutils
+    attributes:
+      label: Binutils and nasm
+      description: Output of `ld --version` and `nasm -v`, first lines
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: Distribution and kernel version
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Failing output
+      description: Run `make clean && make` and paste from the first error
+      render: text
+    validations:
+      required: true

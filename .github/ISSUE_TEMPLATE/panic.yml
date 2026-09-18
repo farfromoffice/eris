@@ -1,0 +1,55 @@
+name: Kernel panic
+description: The kernel panicked, hung or triple faulted
+labels: [bug, panic]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Serial output is the useful part. Run with `make run-serial` and paste
+        everything from the banner onwards.
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: Output of `git rev-parse --short HEAD`
+    validations:
+      required: true
+
+  - type: dropdown
+    id: stage
+    attributes:
+      label: When it happens
+      options:
+        - Before any serial output
+        - During the boot report
+        - While modules load
+        - After the idle loop starts
+        - Only with a specific module loaded
+    validations:
+      required: true
+
+  - type: textarea
+    id: serial
+    attributes:
+      label: Serial log
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: qemu
+    attributes:
+      label: QEMU command and version
+      description: Include `-d int,cpu_reset` output if you have it
+      render: text
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to reproduce
+      value: |
+        1. make
+        2. ./scripts/boot-test.sh
+    validations:
+      required: true

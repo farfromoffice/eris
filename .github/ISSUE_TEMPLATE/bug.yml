@@ -1,0 +1,53 @@
+name: Bug
+description: Something behaves wrong without taking the kernel down
+labels: [bug]
+body:
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - boot
+        - cpu, interrupts, timer
+        - memory, heap
+        - module framework
+        - vga
+        - keyboard
+        - desktop
+        - build or scripts
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: serial
+    attributes:
+      label: Serial log
+      render: text
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
