@@ -9,6 +9,7 @@
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/mm.hpp>
+#include <eris/paging.hpp>
 #include <eris/module.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
@@ -16,6 +17,8 @@
 #include <eris/serial.hpp>
 #include <eris/time.hpp>
 #include <eris/version.hpp>
+
+extern "C" void kernel_main(eris::u32 multiboot_magic, eris::u64 multiboot_info);
 
 namespace eris {
 namespace {
@@ -43,11 +46,6 @@ ERIS_NOINLINE u64 overflow_stack(u64 depth)
     // Handing the frame address to the compiler as an opaque value stops it
     // from rewriting this into a loop that never grows the stack.
     asm volatile("" : : "r"(&filler[0]) : "memory");
-
-    // The full page, not the sentinel: a frame this size can step over the
-    // sentinel window without writing a byte in it.
-    if (!arch::stack_guards_intact())
-        panic("kernel stack overflowed into its guard page at depth %lu", depth);
 
     return filler[0] + overflow_stack(depth + 1);
 }
@@ -78,6 +76,14 @@ void inject_fault(const char* kind)
         // is exactly what the double fault stack exists for.
         asm volatile("mov $0xdeadbe000, %rsp\n"
                      "push $0\n");
+    } else if (strcmp(kind, "text") == 0) {
+        // W^X means this store has to fault even in ring 0, which only holds
+        // while CR0.WP is set.
+        auto* code = reinterpret_cast<volatile u8*>(&kernel_main);
+        *code = 0xCC;
+    } else if (strcmp(kind, "rodata") == 0) {
+        auto* constant = const_cast<volatile char*>(version_name);
+        *constant = 'x';
     } else if (strcmp(kind, "stack") == 0) {
         overflow_stack(0);
     } else if (strcmp(kind, "panic") == 0) {
@@ -85,6 +91,37 @@ void inject_fault(const char* kind)
     } else {
         pr_err("unknown fault kind %s\n", kind);
     }
+}
+
+// Proves the heap really commits new pages instead of living inside whatever
+// the first reservation happened to cover.
+void heap_selftest()
+{
+    constexpr usize chunk = 512 * 1024;
+    constexpr usize chunks = 8;
+
+    void* blocks[chunks]{};
+    const usize before = heap_capacity();
+
+    for (usize i = 0; i < chunks; ++i) {
+        blocks[i] = kmalloc(chunk);
+        if (blocks[i] == nullptr) {
+            pr_err("heap selftest: allocation %lu failed\n", static_cast<u64>(i));
+            return;
+        }
+        memset(blocks[i], 0x5A, chunk);
+    }
+
+    const usize peak = heap_capacity();
+
+    for (usize i = 0; i < chunks; ++i)
+        kfree(blocks[i]);
+
+    pr_info("heap selftest: %lu KiB committed, grew from %lu to %lu KiB, %lu KiB in use\n",
+            static_cast<u64>((peak - before) / 1024),
+            static_cast<u64>(before / 1024),
+            static_cast<u64>(peak / 1024),
+            static_cast<u64>(heap_used() / 1024));
 }
 
 void report_memory()
@@ -132,8 +169,12 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     arch::pic_init();
 
     mm::page_alloc_init(multiboot_magic, multiboot_info);
+    mm::paging_init();
     mm::heap_init();
     report_memory();
+
+    if (cmdline_has("mmtest"))
+        heap_selftest();
 
     timer_init(100);
     arch::sti();

@@ -10,7 +10,7 @@ KERNEL=${KERNEL:-build/eris32.elf}
 TIMEOUT=${TIMEOUT:-20}
 LOGDIR=${LOGDIR:-build/faults}
 
-kinds=(unmapped opcode divide doublefault stack panic)
+kinds=(unmapped opcode divide doublefault stack text rodata panic)
 
 if [[ $# -gt 0 ]]; then
     kinds=("$@")
