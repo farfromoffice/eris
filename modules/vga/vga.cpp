@@ -4,6 +4,7 @@
 #include <eris/console.hpp>
 #include <eris/export.hpp>
 #include <eris/io.hpp>
+#include <eris/paging.hpp>
 #include <eris/module.hpp>
 #include <eris/printk.hpp>
 
@@ -15,11 +16,14 @@ namespace {
 constexpr usize width = 80;
 constexpr usize height = 25;
 constexpr u64 framebuffer_addr = 0xB8000;
+constexpr usize buffer_bytes = width * height * sizeof(u16);
 
 class VgaConsole final : public Console {
 public:
     void put(char c) override;
 
+    bool attach();
+    void detach();
     void clear();
     void put_cell(usize x, usize y, char c, u8 color);
     void set_color(u8 color) { color_ = color; }
@@ -28,7 +32,7 @@ public:
 private:
     void scroll();
 
-    volatile u16* buffer_ = reinterpret_cast<volatile u16*>(framebuffer_addr);
+    volatile u16* buffer_ = nullptr;
     usize column_ = 0;
     usize row_ = 0;
     u8 color_ = 0x07;
@@ -40,6 +44,20 @@ bool console_enabled = false;
 u16 make_cell(char c, u8 color)
 {
     return static_cast<u16>(static_cast<u8>(c)) | static_cast<u16>(color) << 8;
+}
+
+bool VgaConsole::attach()
+{
+    // The framebuffer is device memory, so it comes through the mapping API
+    // rather than by trusting that the address happens to be mapped.
+    buffer_ = static_cast<volatile u16*>(mm::map_device(framebuffer_addr, buffer_bytes));
+    return buffer_ != nullptr;
+}
+
+void VgaConsole::detach()
+{
+    mm::unmap_device(const_cast<u16*>(buffer_), buffer_bytes);
+    buffer_ = nullptr;
 }
 
 void VgaConsole::clear()
@@ -110,6 +128,9 @@ void hide_cursor()
 
 int vga_module_init()
 {
+    if (!instance.attach())
+        return -1;
+
     hide_cursor();
     instance.clear();
     vga_console_enable(true);
@@ -120,6 +141,7 @@ void vga_module_exit()
 {
     vga_console_enable(false);
     instance.clear();
+    instance.detach();
 }
 
 } // namespace
