@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 farfromoffice
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-boot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends make g++-14 nasm qemu-system-x86
+
+      - name: Build
+        run: make -j"$(nproc)" CXX=g++-14
+
+      - name: Boot in QEMU
+        run: |
+          status=0
+          timeout 10 qemu-system-x86_64 -kernel build/eris32.elf -m 512M \
+              -display none -no-reboot -serial file:boot.log || status=$?
+          cat boot.log
+
+          if [ "$status" -ne 124 ]; then
+              echo "::error::QEMU exited early with status $status"
+              exit 1
+          fi
+          if grep -F -e 'kernel panic' -e '[err]' -e '[failed]' boot.log; then
+              echo "::error::boot log reports errors"
+              exit 1
+          fi
+          if ! grep -q 'modules: .* registered' boot.log; then
+              echo "::error::boot did not reach module report"
+              exit 1
+          fi
+
+      - name: Upload boot log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-log
+          path: boot.log
+          if-no-files-found: ignore
