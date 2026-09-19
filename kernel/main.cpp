@@ -488,11 +488,13 @@ void load_initrd_modules()
 // then checks the pages came back and that a stale ABI stamp is refused.
 void module_selftest()
 {
-    const char* name = "desktop";
+    // A leaf is the only honest guinea pig here: a module something else
+    // depends on refuses to unload, and rightly so.
+    const char* name = "virtio_blk";
 
-    const char* file = "desktop.ko";
+    const char* file = "virtio_blk.ko";
     usize length = 0;
-    const void* image = initrd_find("desktop", length);
+    const void* image = initrd_find("virtio_blk", length);
 
     if (image == nullptr) {
         pr_err("module selftest: the initrd carries nothing to load\n");
