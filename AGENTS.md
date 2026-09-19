@@ -163,6 +163,10 @@ Code names come from the far solar system, the bodies out past Neptune the
 kernel takes its own name from. A name is chosen when the milestone opens, and it
 is never reused. `ROADMAP.md` holds the assigned list.
 
+Landing a phase does not bump the version. `include/eris/version.hpp` moves only
+when a release is cut deliberately, so work on main and published versions stay
+separate things.
+
 ## Pull requests
 
 Describe the behaviour before and after, say how you tested it, and paste the
