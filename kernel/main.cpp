@@ -9,6 +9,11 @@
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/acpi.hpp>
+#include <eris/block.hpp>
+#include <eris/devfs.hpp>
+#include <eris/ext2.hpp>
+#include <eris/ramfs.hpp>
+#include <eris/vfs.hpp>
 #include <eris/elf.hpp>
 #include <eris/export.hpp>
 #include <eris/initrd.hpp>
@@ -289,8 +294,10 @@ void thread_selftest()
 
 void report_modules();
 void load_initrd_modules();
+void mount_filesystems();
 void module_selftest();
 void block_selftest();
+void fs_selftest();
 void time_selftest();
 void smp_selftest();
 void thread_selftest();
@@ -309,6 +316,7 @@ void kernel_init(void*)
     pci::init();
 
     load_initrd_modules();
+    mount_filesystems();
     report_modules();
 
     if (cmdline_has("smptest"))
@@ -322,6 +330,9 @@ void kernel_init(void*)
 
     if (cmdline_has("blktest"))
         block_selftest();
+
+    if (cmdline_has("fstest"))
+        fs_selftest();
 
     if (cmdline_has("test_exit")) {
         pr_info("selftests finished, leaving\n");
@@ -524,6 +535,89 @@ void block_selftest()
         pr_info("block selftest: sector 4 came back byte for byte\n");
 
     mm::free_page(frame);
+}
+
+// Storage arrives through modules, so this runs after they have loaded: adopt
+// whatever they registered, then put a file system on top of it.
+void mount_filesystems()
+{
+    fs::init();
+    fs::mount("/", fs::ramfs_create());
+
+    block_register_module("vda", "virtio_blk_read", "virtio_blk_write", "virtio_blk_capacity");
+
+    fs::mount("/dev", fs::devfs_create());
+
+    if (BlockDevice* disk = block_device_at(0); disk != nullptr) {
+        if (fs::FileSystem* ext2 = fs::ext2_mount(disk); ext2 != nullptr)
+            fs::mount("/mnt", ext2);
+    }
+
+    for (usize i = 0; i < fs::mount_count(); ++i) {
+        const char* kind = nullptr;
+        const char* path = fs::mount_at(i, kind);
+        if (path != nullptr)
+            pr_info("vfs: %s holds %s\n", path, kind);
+    }
+}
+
+// Exercises all three mounts: a file in memory, a device node and a real file
+// read off a disk through the driver that was loaded from the initrd.
+void fs_selftest()
+{
+    char buffer[128]{};
+
+    if (fs::Inode* note = fs::ramfs_create_file("notes.txt"); note != nullptr) {
+        constexpr const char* text = "written into ramfs";
+        note->write(0, text, strlen(text));
+    }
+
+    const isize read_back = fs::read_file("/notes.txt", buffer, sizeof(buffer) - 1);
+    if (read_back > 0) {
+        buffer[read_back] = '\0';
+        pr_info("fs selftest: /notes.txt reads \"%s\"\n", buffer);
+    } else {
+        pr_err("fs selftest: the ramfs file did not come back\n");
+    }
+
+    for (usize i = 0; i < 8; ++i) {
+        const char* entry = fs::list("/dev", i);
+        if (entry == nullptr)
+            break;
+        pr_info("fs selftest: /dev holds %s\n", entry);
+    }
+
+    fs::Stat status{};
+    if (fs::stat("/mnt/hello.txt", status) != 0) {
+        pr_info("fs selftest: no disk file to read, the mount is empty\n");
+        return;
+    }
+
+    memset(buffer, 0, sizeof(buffer));
+    const isize from_disk = fs::read_file("/mnt/hello.txt", buffer, sizeof(buffer) - 1);
+
+    if (from_disk <= 0) {
+        pr_err("fs selftest: reading /mnt/hello.txt failed\n");
+        return;
+    }
+
+    for (isize i = 0; i < from_disk; ++i) {
+        if (buffer[i] == '\n')
+            buffer[i] = '\0';
+    }
+
+    pr_info("fs selftest: /mnt/hello.txt is %lu bytes and reads \"%s\"\n",
+            status.size, buffer);
+
+    for (usize i = 0; i < 8; ++i) {
+        const char* entry = fs::list("/mnt", i);
+        if (entry == nullptr)
+            break;
+        pr_info("fs selftest: /mnt holds %s\n", entry);
+    }
+
+    constexpr const char* through_console = "fs selftest: this line went through /dev/console\n";
+    fs::write_file("/dev/console", through_console, strlen(through_console));
 }
 
 void report_memory()
