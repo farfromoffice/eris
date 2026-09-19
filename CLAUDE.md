@@ -75,10 +75,12 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 6. `mm::heap_init`, which reserves virtual space and commits the first 2 MiB
 7. `acpi::init`, `arch::irq_init` and `clock_init`, in that order, because the
    controller and the clock both come out of the tables
-8. `timers_init`, `arch::sti`, then `arch::smp_init`
-9. `module_init_builtin`, which loads every descriptor found in `.eris_modules`
-10. `report_modules`, then whichever self tests the command line asked for, then
-    an idle loop that drains deferred work and halts
+8. `timers_init`, `arch::sti`, `arch::smp_init`, then `sched_init`
+9. `work_start` and the `kinit` thread, which carries the rest of the boot
+   sequence: `module_init_builtin`, `report_modules` and whichever self tests
+   the command line asked for
+10. the boot CPU falls into its idle loop, and every other core is already in
+    one of its own
 
 Nothing before step 3 may allocate. Nothing before step 1 may print.
 
@@ -104,7 +106,8 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
 | `eris/apic.hpp` | Local APIC, IO APIC, the vectors they use |
-| `eris/work.hpp` | `schedule_work`, `work_run_pending` |
+| `eris/work.hpp` | `schedule_work`, `work_run_pending`, `work_start` |
+| `eris/thread.hpp` | `Thread`, `WaitQueue`, `yield`, `thread_sleep_ms`, preempt count |
 | `eris/lock.hpp` | `SpinLock`, `IrqSpinLock`, `RecursiveIrqLock`, guards |
 | `eris/atomic.hpp` | `Atomic<T>`, `RefCount`, `memory_barrier`, `cpu_relax` |
 | `eris/cpu.hpp` | Per CPU block, TSS, IST stacks, `smp_init`, `this_cpu` |
@@ -201,7 +204,13 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   driven by a periodic timer on top of it.
 * The timer queue programs the hardware for the nearest deadline only. A
   callback runs in interrupt context, so it must be short and must not
-  allocate. `schedule_work` moves the rest to the idle path.
+  allocate. `schedule_work` moves the rest to the `kworker` thread.
+* The scheduler holds `sched_lock` across a context switch and the thread that
+  resumes releases it. A thread that has never run unlocks it from its
+  trampoline, which is why `thread_entry_start` starts with an unlock that looks
+  unbalanced.
+* Preemption happens on the APIC timer, after the end of interrupt and only when
+  the preempt count is zero.
 * QEMU's `-kernel` only loads 32-bit ELF, so `make` produces `build/eris32.elf`
   with `objcopy`. `build/eris.elf` is the real image and the one an ISO uses.
 
@@ -255,6 +264,7 @@ make
 qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append mmtest
 qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append timetest
 CPUS=8 ./scripts/smp-test.sh
+CPUS=4 ./scripts/thread-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning

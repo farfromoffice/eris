@@ -68,6 +68,15 @@ F:	include/eris/panic.hpp
 F:	include/eris/string.hpp
 F:	include/eris/serial.hpp
 
+SCHEDULER
+M:	farfromoffice
+S:	Maintained
+F:	kernel/sched/
+F:	include/eris/thread.hpp
+P:	The scheduler lock is held across a switch and released by whoever
+	resumes. Read thread_entry_start before changing either side.
+T:	CPUS=4 ./scripts/thread-test.sh
+
 CLOCK AND TIMERS
 M:	farfromoffice
 S:	Maintained

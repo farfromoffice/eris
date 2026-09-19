@@ -20,7 +20,7 @@ here.
 7. [Phase 2: virtual memory](#phase-2-virtual-memory) (mostly done)
 8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time) (done)
 9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu) (done)
-10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling)
+10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling) (done)
 11. [Phase 6: loadable modules](#phase-6-loadable-modules)
 12. [Phase 7: buses and devices](#phase-7-buses-and-devices)
 13. [Phase 8: storage and a file system](#phase-8-storage-and-a-file-system)
@@ -43,6 +43,9 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga`,
 `keyboard`, `desktop`.
+
+Phase 5 put threads on top: the second half of boot runs as `kinit`, deferred
+work has a `kworker` thread, and anything can sleep or block instead of spinning.
 
 Every core the firmware reports is online as of phase 4, with per CPU
 descriptors, IRQ safe locks and atomic refcounts on the shared structures.
@@ -139,7 +142,7 @@ either.
 | Interrupt controller | ACPI tables, local APIC, IO APIC, HPET clock, deadline timers | MSI, x2APIC, per CPU timers | mostly done |
 | Concurrency | Spinlocks, IRQ safe locks, atomics, per CPU areas | Lock ordering rules, RCU style readers | done |
 | Multiprocessing | Every core online, IPIs, TLB shootdown | Per CPU scheduling, x2APIC | mostly done |
-| Scheduling | None, idle loop | Kernel threads, context switch, wait queues, preemption | 5 |
+| Scheduling | Kernel threads, round robin, wait queues, preemption | Per CPU run queues, priorities, fair policy | mostly done |
 | Loadable modules | Built in descriptors only | Relocatable images loaded at runtime, versioned ABI, initrd | 6 |
 | Device discovery | Hard coded ports | PCI enumeration, bus and driver matching, virtio, MSI | 7 |
 | Storage and VFS | None | Block layer, VFS, ramfs, devfs, an on disk file system | 8 |
@@ -336,49 +339,47 @@ report or two cores interleave letter by letter.
 ## Phase 5: threads and scheduling
 
 **Goal.** More than one line of execution, and code that can block instead of
-spinning.
-
-**Why now.** Drivers in phase 7 and 8 wait on hardware. Without threads that wait
-is a busy loop with interrupts disabled.
+spinning. Landed on main, ships in 0.4, Orcus.
 
 **Work**
 
-- [ ] `kernel/sched/thread.cpp`, `include/eris/thread.hpp`:
+- [x] ~~`kernel/sched/thread.hpp` and `scheduler.cpp`: `Thread::spawn`, sleep,
+  exit and wake, each thread on its own stack from the page allocator, with the
+  bookkeeping private to a `Scheduler` class that Thread names as its friend.~~
+- [x] ~~`kernel/sched/switch.asm`: the context switch saves the callee saved
+  registers, parks the stack pointer and continues on the next thread's stack.
+  A thread that has never run resumes through a trampoline that finds its entry
+  point and argument in the registers the switch restored.~~
+- [x] ~~Round robin scheduling with an idle thread per CPU. One shared run queue
+  for now, which is enough while every core takes work from the same place.~~
+- [x] ~~Sleep with real deadlines: a sleeping thread is parked off the run queue
+  and comes back when the clock passes its wake time, so it costs nothing while
+  it waits.~~
+- [x] ~~`WaitQueue`: a thread blocks until something wakes it, which is what a
+  driver does instead of spinning on a register.~~
+- [x] ~~Preemption from the APIC timer with a preempt count, so a critical path
+  can hold off the switch.~~
+- [x] ~~Deferred work moved onto a `kworker` thread, which replaces the idle path
+  draining the queue.~~
+- [x] ~~Module init moved into thread context: the second half of boot runs as
+  `kinit`, so an init is allowed to sleep on hardware.~~
+- [x] ~~A panic lists the threads and says which one was running on which core.~~
+- [ ] Per CPU run queues and priorities. The shared queue is honest while there
+  is nothing to be unfair about, and both belong with the first workload that
+  cares.
 
-  ```cpp
-  namespace eris {
-  class Thread {
-  public:
-      static Thread* spawn(const char* name, void (*entry)(void*), void* arg);
-      void sleep_ns(u64 ns);
-      void wake();
-      void exit(int code);
-      const char* name() const;
-  };
-  Thread* current_thread();
-  void yield();
-  }
-  ```
-
-- [ ] `kernel/sched/switch.asm`: context switch saving callee saved registers and the
-  stack pointer, with a first switch path for a thread that has never run.
-- [ ] `kernel/sched/scheduler.cpp`: per CPU run queues, round robin to start,
-  priority levels and a fair policy later, an idle thread per CPU that halts.
-- [ ] `kernel/sched/wait.cpp`: wait queues, `wait_event(queue, condition)` and
-  `wake_all`, plus timed waits built on phase 3 timers.
-- [ ] Preemption from the APIC timer with a preempt count, so critical sections are
-  not interrupted into a switch.
-- [ ] Work queues on top of threads, replacing the phase 3 deferred work stub.
-- [ ] Module init moved into thread context, which lets an init block on hardware.
-- [ ] Thread aware backtraces and a thread list in the panic dump.
-
-**Done when.** Two kernel threads interleave on one core, a thread sleeps 50 ms
+**Done when.** Two kernel threads interleave on one CPU, a thread sleeps 50 ms
 and wakes within a millisecond of the deadline, a thread blocked on a wait queue
-consumes no CPU, and the same test passes with several cores online.
+consumes no CPU, and the same test passes with several cores online. Done:
+`./scripts/thread-test.sh` runs on 1, 2 and 4 cores, four counting threads reach
+exactly 80000 rounds, the sleeper wakes at 50 ms, and the gate thread stays
+blocked until it is opened.
 
-**Traps.** Switching while holding a spinlock is a deadlock waiting for a second
-CPU to find it. The idle thread must halt with interrupts enabled, and the window
-between deciding to idle and halting is a classic lost wakeup.
+**Traps.** The scheduler lock is taken before a switch and released by whoever
+resumes next, so a thread that has never run has to unlock it from its
+trampoline rather than inherit a frame that does. Switching inside the timer
+interrupt is fine because every thread has its own stack, but only after the end
+of interrupt has been sent.
 
 ## Phase 6: loadable modules
 
@@ -1229,7 +1230,7 @@ Not a phase, work that grows with each of the above.
 2  virtual memory ......... done except the higher half move
 3  apic and time .......... done
 4  locks and SMP .......... done
-5  threads ................ needs 4
+5  threads ................ done
 6  loadable modules ....... needs 2, much better with 5
 7  buses and devices ...... needs 3 and 6
 8  storage and VFS ........ needs 7
@@ -1258,7 +1259,7 @@ tag and never reused.
 | 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, three built in modules | released |
 | 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | phase 1 and most of 2 landed |
 | 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | landed |
-| 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | phase 4 landed |
+| 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | landed |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | planned |
 | 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | planned |
 | 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | planned |
