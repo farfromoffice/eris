@@ -54,8 +54,9 @@ network is a task to push back on.
 ## Releases
 
 `include/eris/version.hpp` is the single source for the version and the code
-name, and the banner prints both. Release 0.1 is `Dysnomia`, and `ROADMAP.md`
-holds the names assigned to later milestones.
+name, and the banner prints both. The tree is on 0.1, `Dysnomia`. Roadmap
+milestones carry names for later versions, but landing a phase never bumps this
+header: the version moves only when a release is cut on purpose.
 
 ## Boot order
 
@@ -77,8 +78,8 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
    order, because the controller and the clock both come out of the tables
 8. `timers_init`, `arch::sti`, `arch::smp_init`, then `sched_init`
 9. `work_start` and the `kinit` thread, which carries the rest of the boot
-   sequence: `module_init_builtin`, the initrd load, `report_modules` and
-   whichever self tests the command line asked for
+   sequence: `module_init_builtin`, `pci::init`, the initrd load,
+   `report_modules` and whichever self tests the command line asked for
 10. the boot CPU falls into its idle loop, and every other core is already in
     one of its own
 
@@ -104,6 +105,9 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state, `module_load_image` |
 | `eris/elf.hpp` | ELF64 relocatable structures the loader reads |
 | `eris/initrd.hpp` | Tar archive lookup for the modules the boot loader passed in |
+| `eris/device.hpp` | `Device`, `BusDevice`, `Driver`, the registry that binds them |
+| `eris/pci.hpp` | Configuration space, enumeration, BAR decoding, capabilities |
+| `eris/module_api.hpp` | The C ABI a loadable module is allowed to call |
 | `eris/export.hpp` | `ERIS_EXPORT_SYMBOL`, `symbol_lookup` |
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
@@ -125,10 +129,12 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `vga` | 0.1 | none | `vga_clear` `vga_put_cell` `vga_write` `vga_fill_row` `vga_set_color` `vga_console_enable` `vga_width` `vga_height` |
 | `keyboard` | 0.1 | none | `keyboard_subscribe` `keyboard_unsubscribe` |
 | `desktop` | 0.1 | `vga`, `keyboard` | none, it is a leaf |
+| `virtio_blk` | 0.1 | none | `virtio_blk_present` `virtio_blk_capacity` `virtio_blk_read` `virtio_blk_write` |
+| `rtc` | 0.1 | none | `rtc_read` `rtc_unix_time` |
 
-`vga` and `keyboard` are linked into the image, `desktop` is built as
-`build/modules/desktop.ko`, packed into `build/initrd.tar` and loaded at boot.
-`BUILTIN_MODULES` in the Makefile decides which is which.
+`vga` and `keyboard` are linked into the image. `desktop`, `virtio_blk` and
+`rtc` are built as `build/modules/<name>.ko`, packed into `build/initrd.tar` and
+loaded at boot. `BUILTIN_MODULES` in the Makefile decides which is which.
 
 Exported symbols right now: 8, six from `vga` and two from `keyboard`.
 `vga_width` and `vga_height` are callable but not exported yet.
@@ -230,6 +236,13 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   `build/initrd.tar` as a `.ko`.
 * `R_X86_64_PC32` reaches two gigabytes, which is why module images come from
   the vmalloc area rather than anywhere else.
+* The bus is walked before the loadable modules arrive, so a driver finds its
+  device the moment its init runs.
+* A loaded image brings its own export table. The loader runs the image's
+  constructors first, because that is what fills the entries, then registers the
+  table, and drops it again on unload.
+* A driver that finds no hardware returns success and stays idle. Failing its
+  init only makes the boot log claim something is broken.
 * A module ABI is `extern "C"` on purpose. A mangled name is not something the
   export table can promise to keep.
 * Adding a header dependency to `include/eris/module.hpp` rebuilds every module,
@@ -282,6 +295,7 @@ qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M 
 CPUS=8 ./scripts/smp-test.sh
 CPUS=4 ./scripts/thread-test.sh
 ./scripts/module-test.sh
+./scripts/device-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning

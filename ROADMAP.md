@@ -22,7 +22,7 @@ here.
 9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu) (done)
 10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling) (done)
 11. [Phase 6: loadable modules](#phase-6-loadable-modules) (done)
-12. [Phase 7: buses and devices](#phase-7-buses-and-devices)
+12. [Phase 7: buses and devices](#phase-7-buses-and-devices) (mostly done)
 13. [Phase 8: storage and a file system](#phase-8-storage-and-a-file-system)
 14. [Phase 9: userspace](#phase-9-userspace)
 15. [Phase 10: graphics and the desktop](#phase-10-graphics-and-the-desktop)
@@ -37,12 +37,16 @@ here.
 
 ## Where we are
 
-Release 0.1, code name Dysnomia. Multiboot entry, long mode, identity mapped
+The tree is on 0.1, code name Dysnomia, with everything below it already on main. Multiboot entry, long mode, identity mapped
 first gigabyte, GDT and IDT, legacy
 PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga` and
 `keyboard` built in, `desktop` loaded from the initrd.
+
+Phase 7 gave drivers a bus to find hardware on: PCI is enumerated at boot, a
+loadable module drives a real virtio disk through the exported kernel ABI, and
+the CMOS clock is a module too.
 
 Phase 6 made the module framework real: `desktop` is no longer linked into the
 image, it is a relocatable object in the initrd that the kernel maps, relocates
@@ -113,9 +117,11 @@ text in the same commit that lands it:
 - [x] ~~landed, see the commit that did it~~
 ```
 
-A phase whose items are all ticked gets its heading struck through too, and the
-matching row in the version table moves to released. Nothing is ticked before
-`make` and `./scripts/boot-test.sh` pass with it in.
+A phase whose items are all ticked gets its heading struck through too. Nothing
+is ticked before `make` and `./scripts/boot-test.sh` pass with it in.
+
+Ticking a phase does not touch `include/eris/version.hpp`. The version moves
+when a release is cut on purpose, not when work lands.
 
 ## Non goals
 
@@ -148,7 +154,7 @@ either.
 | Multiprocessing | Every core online, IPIs, TLB shootdown | Per CPU scheduling, x2APIC | mostly done |
 | Scheduling | Kernel threads, round robin, wait queues, preemption | Per CPU run queues, priorities, fair policy | mostly done |
 | Loadable modules | Relocatable images from an initrd, versioned ABI, clean unload | Autoload by device id, module GOT | mostly done |
-| Device discovery | Hard coded ports | PCI enumeration, bus and driver matching, virtio, MSI | 7 |
+| Device discovery | PCI enumeration, driver matching, virtio-blk, rtc | MSI, MMCONFIG, AHCI, framebuffer | mostly done |
 | Storage and VFS | None | Block layer, VFS, ramfs, devfs, an on disk file system | 8 |
 | Userspace | None, everything ring 0 | Syscalls, ELF loading, processes, signals, a small libc | 9 |
 | Graphics | Kernel side VGA text desktop | Framebuffer device, userspace window server, toolkit, apps | 10 |
@@ -161,7 +167,7 @@ either.
 ## ~~Phase 1: survive a fault~~
 
 **Goal.** The kernel reports its own death instead of rebooting silently.
-Landed on main, ships in 0.2, Sedna.
+Landed on main. The version it will carry is 0.2, Sedna, once a release is cut.
 
 **Work**
 
@@ -203,7 +209,7 @@ the optimiser unless the frame address is handed to it as an opaque value.
 
 **Goal.** The kernel manages its own address space instead of living inside the
 identity map the boot stub made. Landed on main except for the two items below,
-ships in 0.2, Sedna.
+The version it will carry is 0.2, Sedna.
 
 **Work**
 
@@ -256,7 +262,7 @@ linker never emits, which is why the write test targets `kernel_main`.
 ## Phase 3: modern interrupts and time
 
 **Goal.** Interrupts arrive through the APIC, and time is a real clock rather
-than a tick counter. Landed on main, ships in 0.3, Quaoar.
+than a tick counter. Landed on main, part of the 0.3 Quaoar milestone.
 
 **Work**
 
@@ -300,7 +306,7 @@ easy to skip and produce a keyboard that works on QEMU and nowhere else.
 ## Phase 4: concurrency and more than one CPU
 
 **Goal.** Data structures are safe under real concurrency, and every core the
-firmware reports is running. Landed on main, ships in 0.4, Orcus.
+firmware reports is running. Landed on main, part of the 0.4 Orcus milestone.
 
 **Work**
 
@@ -343,7 +349,7 @@ report or two cores interleave letter by letter.
 ## Phase 5: threads and scheduling
 
 **Goal.** More than one line of execution, and code that can block instead of
-spinning. Landed on main, ships in 0.4, Orcus.
+spinning. Landed on main, part of the 0.4 Orcus milestone.
 
 **Work**
 
@@ -389,7 +395,7 @@ of interrupt has been sent.
 
 **Goal.** A module built separately, never linked into the image, loads at
 runtime, resolves its symbols, runs and unloads cleanly. This is the point of
-the project. Landed on main, ships in 0.5, Makemake.
+the project. Landed on main, part of the 0.5 Makemake milestone.
 
 **Work**
 
@@ -438,63 +444,50 @@ commit.
 
 ## Phase 7: buses and devices
 
-**Goal.** Drivers find their hardware instead of assuming it.
-
-**Why now.** Storage, audio and USB all start here, and phase 6
-autoloading needs something to match against.
+**Goal.** Drivers find their hardware instead of assuming it. Landed on main,
+part of the 0.6 Haumea milestone.
 
 **Work**
 
-- [ ] `kernel/device/device.cpp`, `include/eris/device.hpp`:
+- [x] ~~`include/eris/device.hpp` and `kernel/device/device.cpp`: `Device`,
+  `BusDevice` and `Driver` with a registry that offers every device to every
+  driver, and replays what the bus already found when a driver arrives later,
+  which is what makes a module loaded after boot still bind.~~
+- [x] ~~`kernel/device/pci.cpp`: configuration space through the legacy port pair,
+  recursive enumeration that follows bridges rather than scanning bus zero,
+  header type handling for multifunction devices, BAR decoding and sizing for
+  32 and 64 bit registers with the device disabled while it is measured,
+  capability list walking, and bus mastering enabled per device.~~
+- [x] ~~A device list printed at boot with the vendor, device and class of each
+  function, resolved through a small table.~~
+- [x] ~~`kernel/module/api.cpp`: the kernel services a loadable module may call,
+  all of it C linkage, all of it exported. Memory, device windows, port IO,
+  interrupts, timing and the PCI accessors.~~
+- [x] ~~A loaded image now brings its own exports: the loader runs its
+  constructors, registers its `.eris_symtab` into the kernel table, and drops it
+  again when the module unloads. Module to module calls work from that.~~
+- [x] ~~`modules/virtio_blk/`: the legacy virtio block device over port IO.
+  Feature negotiation through the status register, a split virtqueue laid out
+  the way the specification asks, requests as a header, payload and status byte
+  chained across three descriptors, and the used ring polled with a timeout.
+  Reads and writes whole sectors.~~
+- [x] ~~`modules/rtc/`: the CMOS clock, read twice and only trusted when the two
+  reads agree, with BCD and 12 hour formats decoded from the status register.~~
+- [ ] MSI and MSI-X, MMCONFIG, DMA helpers with an address mask, the virtio
+  transport split out for the other virtio devices, AHCI, and the framebuffer
+  device. Each one is its own piece of work and none of them is in the way of
+  phase 8.
 
-  ```cpp
-  namespace eris {
-  class Device {
-  public:
-      virtual ~Device() = default;
-      virtual const char* name() const = 0;
-      virtual bool start() = 0;
-      virtual void stop() = 0;
-  };
-  class Driver {
-  public:
-      virtual bool matches(const DeviceId& id) const = 0;
-      virtual Device* probe(BusDevice& device) = 0;
-  };
-  void driver_register(Driver*);
-  void driver_unregister(Driver*);
-  }
-  ```
+**Done when.** The kernel prints a PCI device tree with vendor and class names,
+a `virtio-blk` module binds to its device through matching alone, and no driver
+contains a hard coded port number outside the legacy ones. Done:
+`./scripts/device-test.sh` boots with a disk image of known contents, reads
+sector zero back byte for byte and writes a sector and reads it again.
 
-- [ ] `kernel/device/pci.cpp`: configuration space through the legacy ports first,
-  then MMCONFIG from the ACPI MCFG table, bus enumeration, bridges, BAR decoding
-  and sizing, interrupt line and pin, capability list walking.
-- [ ] MSI and MSI-X allocation on top of the phase 3 APIC, one vector per queue.
-- [ ] DMA helpers: physically contiguous allocation, a buffer type that carries both
-  addresses, cache attribute control.
-- [ ] `modules/virtio/`: the shared transport, queue setup, descriptor rings, used
-  and available handling, so `virtio-blk`, `virtio-gpu` and
-  `virtio-input` are thin modules on top.
-- [ ] `modules/ahci/`: real SATA for real machines, port setup, command lists, NCQ
-  later.
-- [ ] `modules/rtc/`: wall clock time from the CMOS, feeding a real `time_of_day`.
-- [ ] `modules/ps2/`: split today's keyboard module into a controller plus keyboard
-  and mouse devices, with scancode set 2 handling, modifiers, key repeat and a
-  key event type instead of a raw character.
-- [ ] `modules/fbdev/`: linear framebuffer from the multiboot framebuffer tag or from
-  `virtio-gpu`, mode listing, a device other code draws into.
-
-Per driver detail for everything named here lives in [the driver program](#the-driver-program),
-tiers 0 to 2.
-
-**Done when.** The kernel prints a PCI device tree with vendor and class names, a
-`virtio-blk` module binds to its device through matching alone, no driver
-contains a hard coded port number outside the legacy ones, and the loader
-autoloads a driver for a device it did not previously know about.
-
-**Traps.** BAR sizing writes all ones and reads back, which needs the device
-disabled first. MSI without the APIC in the right mode delivers to nowhere and
-looks exactly like a driver bug.
+**Traps.** Sizing a BAR writes all ones and reads back what stuck, which only
+means anything while the device is not decoding, so the command register goes
+off and back on around it. A driver with no hardware is idle rather than broken,
+and returning an error from its init just makes the boot log lie.
 
 ## Phase 8: storage and a file system
 
@@ -1209,7 +1202,7 @@ Not a phase, work that grows with each of the above.
 4  locks and SMP .......... done
 5  threads ................ done
 6  loadable modules ....... done
-7  buses and devices ...... needs 3 and 6
+7  buses and devices ...... done enough for 8
 8  storage and VFS ........ needs 7
 9  userspace .............. needs 2, 5, 8
 10 graphics and desktop ... needs 7, 9
@@ -1231,14 +1224,19 @@ the cold bodies out past Neptune where the kernel takes its own name from. The
 name is picked when the milestone opens, printed in the boot banner, used in the
 tag and never reused.
 
+Milestones are planning, not publishing. The tree stays on the version in
+`include/eris/version.hpp` until someone deliberately cuts a release, so work
+landing on main does not move the number. The state column below says whether
+the work is in, not whether a release went out.
+
 | Version | Code name | Contents | State |
 | --- | --- | --- | --- |
-| 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, three built in modules | released |
-| 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | phase 1 and most of 2 landed |
-| 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | landed |
-| 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | landed |
-| 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | landed |
-| 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | planned |
+| 0.1 | Dysnomia | Boot, interrupts, memory, the module framework, the first modules | current version |
+| 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | work on main, unreleased |
+| 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | work on main, unreleased |
+| 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | work on main, unreleased |
+| 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | work on main, unreleased |
+| 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | phase 7 on main, unreleased |
 | 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | planned |
 | 0.8 | Varuna | Phase 10. Window server, toolkit, terminal, panel | planned |
 | 0.9 | Ixion | Phases 11 and 12. Audio, USB, boots on real hardware | planned |

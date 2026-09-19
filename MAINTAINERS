@@ -96,6 +96,34 @@ F:	kernel/acpi/
 F:	include/eris/acpi.hpp
 P:	Tables only. No AML interpreter until something needs shutdown.
 
+BUS AND DEVICE MODEL
+M:	farfromoffice
+S:	Maintained
+F:	kernel/device/
+F:	include/eris/device.hpp
+F:	include/eris/pci.hpp
+P:	Sizing a BAR only works while the device is not decoding. Leave the
+	command register the way you found it.
+T:	./scripts/device-test.sh
+
+MODULE FACING ABI
+M:	farfromoffice
+S:	Supported
+F:	kernel/module/api.cpp
+F:	include/eris/module_api.hpp
+P:	Everything here is C linkage and covered by the module ABI version.
+	Changing a signature means bumping it.
+
+VIRTIO BLOCK MODULE
+M:	farfromoffice
+S:	Maintained
+F:	modules/virtio_blk/
+
+RTC MODULE
+M:	farfromoffice
+S:	Maintained
+F:	modules/rtc/
+
 VGA MODULE
 M:	farfromoffice
 S:	Maintained
