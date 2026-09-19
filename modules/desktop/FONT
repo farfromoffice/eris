@@ -1,7 +1,7 @@
-The glyph coverage in font_*.cpp is generated from Adwaita Sans and Adwaita
-Mono, the interface fonts GNOME and Fedora ship. Both are licensed under the
-SIL Open Font License, version 1.1, and the rasterised bitmaps carry that
-license with them.
+The faces in `fonts/` are Adwaita Sans and Adwaita Mono, the interface fonts
+GNOME and Fedora ship, cut down to the characters the shell draws. Both are
+licensed under the SIL Open Font License, version 1.1, which the subsets carry
+with them.
 
     Copyright 2023 The Adwaita Fonts Project Authors
     https://gitlab.gnome.org/GNOME/adwaita-fonts
@@ -11,5 +11,8 @@ anything derived from it may be used, studied, modified and redistributed
 freely, it may be bundled with software under any license, and it may not be
 sold on its own.
 
-scripts/gen-font.py regenerates the tables. The build does not run it, so a
-machine without the font or without Pillow still builds the tree.
+`scripts/subset-font.py` makes the subsets from the full faces, keeping the
+ninety five characters the shell draws. The build does not run it, so a machine
+without the originals still builds the tree. `build/initrd.tar` carries the
+result, and `modules/desktop/truetype.cpp` parses and rasterises it at run
+time: no glyph is ever compiled into a source file.

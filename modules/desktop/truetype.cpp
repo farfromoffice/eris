@@ -687,4 +687,11 @@ bool font_load(Font& font, const char* path, i32 pixel_size)
     return true;
 }
 
+void font_unload(Font& font)
+{
+    eris_kfree(font.glyphs);
+    eris_kfree(font.pixels);
+    font = Font{};
+}
+
 } // namespace eris::modules

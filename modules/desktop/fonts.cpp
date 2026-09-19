@@ -12,6 +12,14 @@ Font ui_bold{};
 Font ui_small{};
 Font mono{};
 
+void fonts_release()
+{
+    font_unload(ui_regular);
+    font_unload(ui_bold);
+    font_unload(ui_small);
+    font_unload(mono);
+}
+
 bool fonts_ready()
 {
     return ui_regular.glyphs != nullptr && mono.glyphs != nullptr;

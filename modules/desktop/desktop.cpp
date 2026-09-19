@@ -891,6 +891,8 @@ u32 shell_colour(u8 role)
 
 namespace {
 
+void desktop_exit();
+
 int desktop_init()
 {
     if (!fb_present()) {
@@ -906,6 +908,7 @@ int desktop_init()
         && font_load(mono, "/eris-mono.ttf", 13);
 
     if (!fonts_loaded) {
+        fonts_release();
         pr_module_err("desktop: no fonts in /, nothing to draw text with\n");
         return -1;
     }
@@ -920,6 +923,7 @@ int desktop_init()
     if (back_buffer_frames == 0) {
         pr_module_err("desktop: no memory for a %lu KiB back buffer\n",
                       static_cast<u64>(bytes / 1024));
+        desktop_exit();
         return -1;
     }
 
@@ -927,10 +931,9 @@ int desktop_init()
     wallpaper_frames = eris_alloc_pages(wallpaper_pages);
 
     if (wallpaper_frames == 0) {
-        eris_free_pages(back_buffer_frames, back_buffer_pages);
-        back_buffer_frames = 0;
         pr_module_err("desktop: no memory for a %lu KiB wallpaper\n",
                       static_cast<u64>(bytes / 1024));
+        desktop_exit();
         return -1;
     }
 
@@ -938,12 +941,9 @@ int desktop_init()
     mirror_frames = eris_alloc_pages(mirror_pages);
 
     if (mirror_frames == 0) {
-        eris_free_pages(back_buffer_frames, back_buffer_pages);
-        eris_free_pages(wallpaper_frames, wallpaper_pages);
-        back_buffer_frames = 0;
-        wallpaper_frames = 0;
         pr_module_err("desktop: no memory for a %lu KiB mirror\n",
                       static_cast<u64>(bytes / 1024));
+        desktop_exit();
         return -1;
     }
 
@@ -1018,6 +1018,9 @@ void desktop_exit()
         wallpaper_frames = 0;
         wallpaper = nullptr;
     }
+
+    fonts_release();
+    fonts_loaded = false;
 }
 
 } // namespace

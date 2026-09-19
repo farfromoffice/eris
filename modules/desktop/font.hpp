@@ -18,9 +18,11 @@ struct Glyph {
     u16 advance;
 };
 
+// A face owns the two buffers font_load rasterised into and font_unload is
+// what gives them back.
 struct Font {
-    const Glyph* glyphs;
-    const u8* pixels;
+    Glyph* glyphs;
+    u8* pixels;
     u32 first;
     u32 last;
     u16 ascent;
@@ -35,6 +37,11 @@ extern Font ui_small;
 extern Font mono;
 
 bool font_load(Font& font, const char* path, i32 pixel_size);
+void font_unload(Font& font);
+
 bool fonts_ready();
+
+// Gives back whichever of the four faces were loaded and leaves them empty.
+void fonts_release();
 
 } // namespace eris::modules
