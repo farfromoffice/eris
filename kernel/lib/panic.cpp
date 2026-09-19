@@ -11,6 +11,7 @@
 #include <eris/module.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
+#include <eris/thread.hpp>
 
 namespace eris {
 namespace {
@@ -88,6 +89,27 @@ void dump_stack_guards()
     pr_err("the %s stack overflowed into its guard page\n", name != nullptr ? name : "?");
 }
 
+void dump_threads()
+{
+    Thread* self = current_thread();
+    if (self != nullptr)
+        pr_err("current thread: %s (%u) on cpu %u\n", self->name(), self->id(), self->cpu());
+
+    pr_err("threads: %lu alive\n", static_cast<u64>(thread_count()));
+
+    for (usize i = 0; i < 16; ++i) {
+        const Thread* thread = thread_at(i);
+        if (thread == nullptr)
+            break;
+
+        pr_err("  %s %u [%s] cpu %u\n",
+               thread->name(),
+               thread->id(),
+               thread_state_name(thread->state()),
+               thread->cpu());
+    }
+}
+
 void dump_modules()
 {
     pr_err("modules: %lu registered\n", static_cast<u64>(module_count()));
@@ -133,6 +155,7 @@ void panic(const char* fmt, ...)
     dump_control_registers();
     dump_stack_guards();
     backtrace();
+    dump_threads();
     dump_modules();
     console_end(token);
     halt();
@@ -157,6 +180,7 @@ void panic_with_registers(const arch::Registers& regs, const char* fmt, ...)
     dump_instruction_bytes(regs.rip);
     dump_stack_guards();
     backtrace_from(regs.rip, regs.rbp);
+    dump_threads();
     dump_modules();
     console_end(token);
     halt();

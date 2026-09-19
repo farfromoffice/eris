@@ -13,6 +13,7 @@ using WorkFunction = void (*)(void* context);
 // and the handler has already returned.
 bool schedule_work(WorkFunction function, void* context);
 void work_run_pending();
+void work_start();
 usize work_pending();
 u64 work_dropped();
 

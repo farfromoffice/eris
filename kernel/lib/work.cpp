@@ -3,6 +3,7 @@
 
 #include <eris/io.hpp>
 #include <eris/lock.hpp>
+#include <eris/thread.hpp>
 #include <eris/work.hpp>
 
 namespace eris {
@@ -20,6 +21,7 @@ constinit usize head = 0;
 constinit usize tail = 0;
 constinit u64 dropped = 0;
 constinit IrqSpinLock queue_lock{};
+constinit WaitQueue waiting{};
 
 } // namespace
 
@@ -38,6 +40,7 @@ bool schedule_work(WorkFunction function, void* context)
 
     queue[tail] = Item{function, context};
     tail = next;
+    waiting.wake_all();
     return true;
 }
 
@@ -59,6 +62,19 @@ void work_run_pending()
 
         item.function(item.context);
     }
+}
+
+void work_thread(void*)
+{
+    for (;;) {
+        work_run_pending();
+        thread_sleep_ms(10);
+    }
+}
+
+void work_start()
+{
+    Thread::spawn("kworker", work_thread, nullptr);
 }
 
 usize work_pending()
