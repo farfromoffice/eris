@@ -91,6 +91,19 @@ void invalidate(virt_addr address)
     asm volatile("invlpg (%0)" : : "r"(address) : "memory");
 }
 
+// invlpg only reaches the core that runs it. Every other core may still hold
+// the entry as it was, which after a permission change is the difference
+// between module text being executable and faulting on it. The broadcast is
+// sent with the table lock held, so it waits for delivery and not for the
+// other cores to run the handler: one of them may be spinning for that same
+// lock with interrupts off, and waiting for its acknowledgement here would
+// never end.
+void shootdown_others()
+{
+    if (arch::cpu_online_count() > 1)
+        arch::lapic_broadcast_ipi(arch::vector_tlb_shootdown);
+}
+
 void enable_no_execute()
 {
     u32 low, high;
@@ -193,22 +206,27 @@ bool AddressSpace::map(virt_addr address, phys_addr frame, usize length, PageFla
 
 bool AddressSpace::unmap(virt_addr address, usize length)
 {
-    const bool shared = arch::cpu_online_count() > 1;
     IrqGuard guard(table_lock);
+
+    bool complete = true;
+    usize changed = 0;
 
     for (usize offset = 0; offset < length; offset += page_size) {
         u64* table = table_for(address + offset, true);
-        if (table == nullptr)
-            return false;
+        if (table == nullptr) {
+            complete = false;
+            break;
+        }
 
         table[index_of(address + offset, 0)] = 0;
         invalidate(address + offset);
+        ++changed;
     }
 
-    if (shared)
-        arch::lapic_broadcast_ipi(arch::vector_tlb_shootdown);
+    if (changed != 0)
+        shootdown_others();
 
-    return true;
+    return complete;
 }
 
 bool AddressSpace::protect(virt_addr address, usize length, PageFlags flags)
@@ -217,20 +235,31 @@ bool AddressSpace::protect(virt_addr address, usize length, PageFlags flags)
     const u64 bits = encode(flags);
     const bool user = has(flags, PageFlags::User);
 
+    bool complete = true;
+    usize changed = 0;
+
     for (usize offset = 0; offset < length; offset += page_size) {
         u64* table = table_for(address + offset, true, user);
-        if (table == nullptr)
-            return false;
+        if (table == nullptr) {
+            complete = false;
+            break;
+        }
 
         u64& entry = table[index_of(address + offset, 0)];
-        if ((entry & pte_present) == 0)
-            return false;
+        if ((entry & pte_present) == 0) {
+            complete = false;
+            break;
+        }
 
         entry = (entry & pte_address_mask) | bits;
         invalidate(address + offset);
+        ++changed;
     }
 
-    return true;
+    if (changed != 0)
+        shootdown_others();
+
+    return complete;
 }
 
 phys_addr AddressSpace::translate(virt_addr address) const

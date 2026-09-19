@@ -240,6 +240,13 @@ console app shows the same stream inside a window.
   part of it, and every reservation gets a guard page after it.
 * `CR0.WP` and `EFER.NXE` are set in `paging_init`. Without the first, ring 0
   writes through read only pages; without the second, the NX bit is ignored.
+* `unmap` and `protect` broadcast a TLB shootdown when they changed anything
+  and another core is online. `invlpg` reaches one core, without it another
+  core keeps the permissions a page used to have: module text stays writable
+  and not executable there which is the opposite of what the loader just
+  asked for. The broadcast waits for delivery rather than for the other cores
+  to run the handler because it is sent with the page table lock held and a
+  core spinning for that lock has interrupts off.
 * `phys_to_virt` and `virt_to_phys` are the identity today. They exist so the
   higher half move is one edit rather than a hunt, and nothing should open code
   the conversion.

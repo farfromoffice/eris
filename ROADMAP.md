@@ -332,8 +332,8 @@ firmware reports is running. Landed on main, part of the 0.4 Orcus milestone.
   and STARTUP. Each core comes up in long mode on the kernel page tables with
   its own stack and descriptors.~~
 - [x] ~~IPIs: a function call broadcast that waits for every core to finish, a TLB
-  shootdown that follows an unmap, and an NMI that stops the others when one
-  core panics.~~
+  shootdown that follows an unmap or a permission change and an NMI that stops
+  the others when one core panics.~~
 - [x] ~~Retrofit: the module table, the page allocator, the heap, the vmalloc
   ranges, the timer queue, the work queue and the console all took locks.~~
 - [ ] x2APIC and per CPU run queues. The first waits for a machine that needs it,
