@@ -1,0 +1,365 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Copyright (c) 2026 farfromoffice
+
+#include <eris/elf.hpp>
+#include <eris/export.hpp>
+#include <eris/mm.hpp>
+#include <eris/module.hpp>
+#include <eris/paging.hpp>
+#include <eris/printk.hpp>
+#include <eris/string.hpp>
+
+namespace eris {
+namespace {
+
+constexpr usize max_sections = 64;
+
+struct Placement {
+    virt_addr address;
+    bool executable;
+    bool writable;
+};
+
+// Everything one loaded image owns, so unloading is a matter of walking this
+// back rather than remembering what was done.
+struct LoadedImage {
+    virt_addr base;
+    usize pages;
+    Placement placement[max_sections];
+    usize section_count;
+};
+
+usize round_up_pages(usize bytes)
+{
+    return (bytes + page_size - 1) / page_size;
+}
+
+const char* string_at(const u8* image, const elf::SectionHeader& strings, u32 offset)
+{
+    return reinterpret_cast<const char*>(image + strings.offset + offset);
+}
+
+bool allocate_image(LoadedImage& loaded, usize bytes)
+{
+    const usize pages = round_up_pages(bytes);
+    const virt_addr window = mm::vmalloc_reserve(pages * page_size);
+    if (window == 0)
+        return false;
+
+    for (usize i = 0; i < pages; ++i) {
+        const phys_addr frame = mm::alloc_page();
+        if (frame == 0) {
+            mm::vmalloc_release(window, pages * page_size);
+            return false;
+        }
+
+        // Writable while the image is being built, the real permissions land
+        // once the relocations are applied.
+        if (!mm::AddressSpace::kernel().map(window + i * page_size, frame, page_size,
+                                            mm::PageFlags::Write | mm::PageFlags::NoExecute)) {
+            mm::free_page(frame);
+            mm::vmalloc_release(window, pages * page_size);
+            return false;
+        }
+    }
+
+    loaded.base = window;
+    loaded.pages = pages;
+    return true;
+}
+
+void release_image(LoadedImage& loaded)
+{
+    if (loaded.base == 0)
+        return;
+
+    for (usize i = 0; i < loaded.pages; ++i) {
+        const virt_addr page = loaded.base + i * page_size;
+        const phys_addr frame = mm::AddressSpace::kernel().translate(page);
+
+        mm::AddressSpace::kernel().unmap(page, page_size);
+        if (frame != 0)
+            mm::free_page(frame & ~(static_cast<phys_addr>(page_size) - 1));
+    }
+
+    mm::vmalloc_release(loaded.base, loaded.pages * page_size);
+    loaded.base = 0;
+    loaded.pages = 0;
+}
+
+u64 symbol_address(const u8* image,
+                   const elf::SectionHeader* sections,
+                   const elf::SectionHeader& symbols,
+                   const elf::SectionHeader& strings,
+                   const LoadedImage& loaded,
+                   u32 index,
+                   bool& resolved)
+{
+    resolved = false;
+
+    const auto* table = reinterpret_cast<const elf::Symbol*>(image + symbols.offset);
+    const usize count = symbols.size / sizeof(elf::Symbol);
+    if (index >= count)
+        return 0;
+
+    const elf::Symbol& symbol = table[index];
+
+    if (symbol.section == elf::section_undefined) {
+        const char* name = string_at(image, strings, symbol.name);
+        void* address = symbol_lookup(name);
+        if (address == nullptr) {
+            pr_err("module loader: nothing exports %s\n", name);
+            return 0;
+        }
+
+        resolved = true;
+        return reinterpret_cast<u64>(address);
+    }
+
+    if (symbol.section >= max_sections)
+        return 0;
+
+    resolved = true;
+    return loaded.placement[symbol.section].address + symbol.value;
+}
+
+bool apply_relocations(const u8* image,
+                       const elf::Header& header,
+                       const elf::SectionHeader* sections,
+                       LoadedImage& loaded)
+{
+    for (u16 i = 0; i < header.section_header_count; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        if (section.type != elf::section_rela)
+            continue;
+
+        const elf::SectionHeader& target = sections[section.info];
+        if ((target.flags & elf::section_flag_alloc) == 0)
+            continue;
+
+        const elf::SectionHeader& symbols = sections[section.link];
+        const elf::SectionHeader& strings = sections[symbols.link];
+
+        const auto* entries = reinterpret_cast<const elf::Rela*>(image + section.offset);
+        const usize count = section.size / sizeof(elf::Rela);
+
+        for (usize entry = 0; entry < count; ++entry) {
+            const elf::Rela& rela = entries[entry];
+
+            bool resolved = false;
+            const u64 symbol = symbol_address(image, sections, symbols, strings, loaded,
+                                              elf::rela_symbol(rela.info), resolved);
+            if (!resolved)
+                return false;
+
+            const virt_addr where = loaded.placement[section.info].address + rela.offset;
+            const i64 addend = rela.addend;
+
+            switch (elf::rela_type(rela.info)) {
+            case elf::r_x86_64_64:
+                *reinterpret_cast<u64*>(where) = symbol + addend;
+                break;
+            case elf::r_x86_64_pc32:
+            case elf::r_x86_64_plt32: {
+                const i64 value = static_cast<i64>(symbol) + addend - static_cast<i64>(where);
+                if (value < -0x80000000LL || value > 0x7FFFFFFFLL) {
+                    pr_err("module loader: a 32 bit relative relocation does not reach\n");
+                    return false;
+                }
+                *reinterpret_cast<i32*>(where) = static_cast<i32>(value);
+                break;
+            }
+            case elf::r_x86_64_32:
+            case elf::r_x86_64_32s: {
+                const i64 value = static_cast<i64>(symbol) + addend;
+                if (value < -0x80000000LL || value > 0x7FFFFFFFLL) {
+                    pr_err("module loader: a 32 bit absolute relocation does not fit\n");
+                    return false;
+                }
+                *reinterpret_cast<i32*>(where) = static_cast<i32>(value);
+                break;
+            }
+            case elf::r_x86_64_pc64:
+                *reinterpret_cast<u64*>(where) = symbol + addend - where;
+                break;
+            default:
+                pr_err("module loader: relocation type %u is not handled\n",
+                       elf::rela_type(rela.info));
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+void apply_protections(const LoadedImage& loaded,
+                       const elf::Header& header,
+                       const elf::SectionHeader* sections)
+{
+    for (u16 i = 0; i < header.section_header_count && i < max_sections; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        if ((section.flags & elf::section_flag_alloc) == 0 || section.size == 0)
+            continue;
+
+        const Placement& placement = loaded.placement[i];
+        const usize pages = round_up_pages(section.size);
+
+        mm::PageFlags flags = mm::PageFlags::None;
+        if (placement.writable)
+            flags = flags | mm::PageFlags::Write;
+        if (!placement.executable)
+            flags = flags | mm::PageFlags::NoExecute;
+
+        mm::AddressSpace::kernel().protect(placement.address & ~(virt_addr{page_size} - 1),
+                                           pages * page_size, flags);
+    }
+}
+
+} // namespace
+
+// Loads a relocatable image, resolves it against the exported symbols and
+// hands the descriptors it carries to the module framework.
+int module_load_image(const void* data, usize length, const char* origin)
+{
+    const auto* image = static_cast<const u8*>(data);
+
+    if (length < sizeof(elf::Header)) {
+        pr_err("module loader: %s is too small to be an object\n", origin);
+        return -1;
+    }
+
+    const auto& header = *reinterpret_cast<const elf::Header*>(image);
+    if (!elf::header_looks_sane(header, length)) {
+        pr_err("module loader: %s is not a relocatable x86_64 object\n", origin);
+        return -1;
+    }
+
+    if (header.section_header_count > max_sections) {
+        pr_err("module loader: %s has %u sections, more than the loader keeps room for\n",
+               origin, header.section_header_count);
+        return -1;
+    }
+
+    const auto* sections = reinterpret_cast<const elf::SectionHeader*>(
+        image + header.section_header_offset);
+
+    LoadedImage loaded{};
+    loaded.section_count = header.section_header_count;
+
+    // Lay the allocated sections out one after another, each on its own page so
+    // the permissions can differ.
+    usize total = 0;
+    for (u16 i = 0; i < header.section_header_count; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        if ((section.flags & elf::section_flag_alloc) == 0 || section.size == 0)
+            continue;
+        total += round_up_pages(section.size) * page_size;
+    }
+
+    if (total == 0) {
+        pr_err("module loader: %s has nothing to load\n", origin);
+        return -1;
+    }
+
+    if (!allocate_image(loaded, total)) {
+        pr_err("module loader: no memory for %s\n", origin);
+        return -1;
+    }
+
+    usize cursor = 0;
+    for (u16 i = 0; i < header.section_header_count; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        if ((section.flags & elf::section_flag_alloc) == 0 || section.size == 0)
+            continue;
+
+        const virt_addr where = loaded.base + cursor;
+        loaded.placement[i] = Placement{
+            where,
+            (section.flags & elf::section_flag_exec) != 0,
+            (section.flags & elf::section_flag_write) != 0,
+        };
+
+        if (section.type == elf::section_nobits)
+            memset(reinterpret_cast<void*>(where), 0, section.size);
+        else
+            memcpy(reinterpret_cast<void*>(where), image + section.offset, section.size);
+
+        cursor += round_up_pages(section.size) * page_size;
+    }
+
+    if (!apply_relocations(image, header, sections, loaded)) {
+        release_image(loaded);
+        return -1;
+    }
+
+    apply_protections(loaded, header, sections);
+
+    // Find the descriptors the image carries and hand them over.
+    const elf::SectionHeader& names = sections[header.section_name_index];
+    int registered = 0;
+
+    for (u16 i = 0; i < header.section_header_count; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        if (strcmp(string_at(image, names, section.name), ".eris_modules") != 0)
+            continue;
+
+        const usize count = section.size / sizeof(ModuleInfo);
+        const auto* descriptors = reinterpret_cast<const ModuleInfo*>(loaded.placement[i].address);
+
+        for (usize entry = 0; entry < count; ++entry) {
+            if (module_register_loaded(&descriptors[entry], loaded.base, loaded.pages) == 0)
+                ++registered;
+        }
+    }
+
+    if (registered == 0) {
+        pr_err("module loader: %s carries no module descriptor\n", origin);
+        release_image(loaded);
+        return -1;
+    }
+
+    pr_info("module loader: %s mapped at %lx, %lu KiB, %d descriptor%s\n",
+            origin,
+            loaded.base,
+            static_cast<u64>(loaded.pages * page_size / 1024),
+            registered,
+            registered == 1 ? "" : "s");
+
+    return 0;
+}
+
+void module_release_image(virt_addr base, usize pages)
+{
+    LoadedImage loaded{};
+    loaded.base = base;
+    loaded.pages = pages;
+    release_image(loaded);
+}
+
+} // namespace eris
+
+namespace eris::elf {
+
+bool header_looks_sane(const Header& header, usize length)
+{
+    if (header.ident[0] != 0x7F || header.ident[1] != 'E' || header.ident[2] != 'L'
+        || header.ident[3] != 'F')
+        return false;
+
+    if (header.ident[4] != 2 || header.ident[5] != 1)
+        return false;
+
+    if (header.type != type_relocatable || header.machine != machine_x86_64)
+        return false;
+
+    if (header.section_header_size != sizeof(SectionHeader))
+        return false;
+
+    const u64 table_end = header.section_header_offset
+        + static_cast<u64>(header.section_header_count) * header.section_header_size;
+
+    return table_end <= length;
+}
+
+} // namespace eris::elf

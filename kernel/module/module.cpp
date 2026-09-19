@@ -134,6 +134,43 @@ void release_dependencies(const Module& module)
 
 } // namespace
 
+// A module built elsewhere joins the same table the builtin ones live in, once
+// its ABI stamp says it was built against this kernel.
+int module_register_loaded(const ModuleInfo* info, virt_addr base, usize pages)
+{
+    if (info == nullptr)
+        return -1;
+
+    if (info->abi != module_abi_version) {
+        pr_err("module %s was built against abi %u, this kernel speaks %u\n",
+               info->name != nullptr ? info->name : "?",
+               info->abi,
+               module_abi_version);
+        return -1;
+    }
+
+    IrqGuard guard(table_lock);
+
+    if (find(info->name) != nullptr) {
+        pr_err("module %s is already in the table\n", info->name);
+        return -1;
+    }
+
+    if (registered >= max_modules) {
+        pr_err("module table full, %s refused\n", info->name);
+        return -1;
+    }
+
+    Module& slot = modules[registered++];
+    slot.info = info;
+    slot.state = ModuleState::Registered;
+    slot.error = 0;
+    slot.image_base = base;
+    slot.image_pages = pages;
+
+    return 0;
+}
+
 void module_init_builtin()
 {
     for (const ModuleInfo* info = __eris_modules_start; info != __eris_modules_end; ++info) {
@@ -141,10 +178,17 @@ void module_init_builtin()
             pr_warn("module table full, %s skipped\n", info->name);
             continue;
         }
+        if (info->abi != module_abi_version) {
+            pr_warn("builtin module %s carries abi %u, skipped\n", info->name, info->abi);
+            continue;
+        }
+
         Module& slot = modules[registered++];
         slot.info = info;
         slot.state = ModuleState::Registered;
         slot.error = 0;
+        slot.image_base = 0;
+        slot.image_pages = 0;
     }
 
     pr_info("%lu builtin modules registered\n", static_cast<u64>(registered));
@@ -179,6 +223,28 @@ int module_unload(const char* name)
 
     release_dependencies(*module);
     module->state = ModuleState::Registered;
+
+    // A loaded image is only worth keeping while something in it can run.
+    if (module->image_base != 0) {
+        const virt_addr base = module->image_base;
+        const usize pages = module->image_pages;
+
+        module->image_base = 0;
+        module->image_pages = 0;
+
+        for (usize i = 0; i < registered; ++i) {
+            if (&modules[i] == module) {
+                modules[i] = modules[--registered];
+                break;
+            }
+        }
+
+        module_release_image(base, pages);
+        pr_info("module %s unloaded, %lu KiB returned\n", name,
+                static_cast<u64>(pages * page_size / 1024));
+        return 0;
+    }
+
     pr_info("module %s unloaded\n", name);
     return 0;
 }

@@ -207,6 +207,8 @@ ERIS_EXPORT_SYMBOL(vga_write);
 ERIS_EXPORT_SYMBOL(vga_fill_row);
 ERIS_EXPORT_SYMBOL(vga_set_color);
 ERIS_EXPORT_SYMBOL(vga_console_enable);
+ERIS_EXPORT_SYMBOL(vga_width);
+ERIS_EXPORT_SYMBOL(vga_height);
 
 ERIS_MODULE("vga", "0.1", "eris", "GPL-2.0-only", eris::modules::vga_module_init,
             eris::modules::vga_module_exit);
