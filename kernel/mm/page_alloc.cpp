@@ -14,10 +14,11 @@ extern "C" eris::u8 __kernel_end[];
 namespace eris::mm {
 namespace {
 
-constexpr phys_addr managed_limit = 1ULL << 30;
+constexpr phys_addr managed_limit = 4ULL << 30;
 constexpr usize managed_pages = managed_limit / page_size;
 
 constinit u8 bitmap[managed_pages / 8]{};
+constinit usize usable = 0;
 constinit usize used_pages = 0;
 constinit IrqSpinLock allocator_lock{};
 
@@ -121,6 +122,8 @@ void page_alloc_init(u32 multiboot_magic, u64 multiboot_info)
         cursor += entry->size + sizeof(entry->size);
     }
 
+    usable = managed_pages - used_pages;
+
     mark_range_used(0, 1 << 20);
     mark_range_used(1 << 20, reinterpret_cast<u64>(__kernel_end));
     reserve_boot_data(multiboot_info, *info);
@@ -133,13 +136,20 @@ phys_addr alloc_page()
 
 phys_addr alloc_pages(usize count)
 {
+    return alloc_pages_below(count, managed_limit);
+}
+
+phys_addr alloc_pages_below(usize count, phys_addr limit)
+{
     if (count == 0)
         return 0;
+
+    const usize ceiling = limit / page_size < managed_pages ? limit / page_size : managed_pages;
 
     IrqGuard guard(allocator_lock);
 
     usize run = 0;
-    for (usize i = 0; i < managed_pages; ++i) {
+    for (usize i = 0; i < ceiling; ++i) {
         if (test_bit(i)) {
             run = 0;
             continue;
@@ -178,7 +188,7 @@ void free_pages(phys_addr page, usize count)
 
 usize total_pages()
 {
-    return managed_pages;
+    return usable;
 }
 
 usize free_pages_count()

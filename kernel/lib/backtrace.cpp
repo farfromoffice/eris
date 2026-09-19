@@ -16,7 +16,7 @@ struct Frame {
 };
 
 constexpr u64 image_start = 1 << 20;
-constexpr u64 mapped_limit = 1ULL << 30;
+constexpr u64 mapped_limit = 4ULL << 30;
 constexpr usize max_frames = 24;
 
 bool plausible_text(u64 address)

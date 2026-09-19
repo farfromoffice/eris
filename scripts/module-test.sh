@@ -43,9 +43,9 @@ check() {
 }
 
 check "initrd:" "the archive was found"
-check "module loader: modules/desktop.ko" "the out of tree image loaded"
-check "module desktop 0.1 loaded" "its init ran"
-check "module desktop unloaded" "it unloaded"
+check "module loader: modules/virtio_blk.ko" "the out of tree image loaded"
+check "module virtio_blk 0.1 loaded" "its init ran"
+check "module virtio_blk unloaded" "it unloaded"
 check "an image with the wrong abi was refused" "a stale abi is refused"
 check "reloaded" "it came back"
 

@@ -6,8 +6,15 @@ set -euo pipefail
 status=0
 found=()
 
-for dir in modules/*/; do
+# The apps that ship with the desktop sit one level down, so both depths are
+# walked and the nesting level does not change what a module has to declare.
+for dir in modules/*/ modules/internal_apps/*/; do
     name=$(basename "$dir")
+
+    if [[ $name == internal_apps ]]; then
+        continue
+    fi
+
     sources=$(grep -rl "ERIS_MODULE(" "$dir" || true)
 
     if [[ -z $sources ]]; then
@@ -36,7 +43,7 @@ for dir in modules/*/; do
     fi
 
     for dep in $(grep -o '"[a-z0-9_]*"' <<<"${descriptor#*_exit}" | tr -d '"'); do
-        if [[ ! -d modules/$dep ]]; then
+        if [[ ! -d modules/$dep && ! -d modules/internal_apps/$dep ]]; then
             echo "module $name depends on $dep, which is not in the tree" >&2
             status=1
         fi

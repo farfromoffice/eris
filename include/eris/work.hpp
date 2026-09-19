@@ -15,6 +15,8 @@ bool schedule_work(WorkFunction function, void* context);
 void work_run_pending();
 void work_start();
 usize work_pending();
+
+usize work_cancel_owner(virt_addr base, usize length);
 u64 work_dropped();
 
 } // namespace eris

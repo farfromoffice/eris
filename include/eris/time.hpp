@@ -24,6 +24,8 @@ void timers_init();
 TimerHandle timer_after(u64 delay_ns, TimerCallback callback, void* context);
 TimerHandle timer_every(u64 period_ns, TimerCallback callback, void* context);
 void timer_cancel(TimerHandle handle);
+
+usize timer_cancel_owner(virt_addr base, usize length);
 void timers_run();
 
 void udelay(u64 microseconds);

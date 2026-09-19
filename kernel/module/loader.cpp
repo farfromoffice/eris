@@ -39,28 +39,28 @@ const char* string_at(const u8* image, const elf::SectionHeader& strings, u32 of
     return reinterpret_cast<const char*>(image + strings.offset + offset);
 }
 
+// The relocations a compiler emits for kernel code are 32 bit: PC32 reaches
+// two gigabytes and 32S needs the address itself to fit in a signed 32 bit
+// word. An image above this line cannot satisfy either. It's refused here
+// rather than mapped, relocated and then rejected one entry at a time.
+constexpr phys_addr image_limit = 2ULL << 30;
+
 bool allocate_image(LoadedImage& loaded, usize bytes)
 {
     const usize pages = round_up_pages(bytes);
-    const virt_addr window = mm::vmalloc_reserve(pages * page_size);
-    if (window == 0)
+    const phys_addr frames = mm::alloc_pages_below(pages, image_limit);
+    if (frames == 0)
         return false;
 
-    for (usize i = 0; i < pages; ++i) {
-        const phys_addr frame = mm::alloc_page();
-        if (frame == 0) {
-            mm::vmalloc_release(window, pages * page_size);
-            return false;
-        }
+    const virt_addr window = mm::phys_to_virt(frames);
 
-        // Writable while the image is being built, the real permissions land
-        // once the relocations are applied.
-        if (!mm::AddressSpace::kernel().map(window + i * page_size, frame, page_size,
+    // Writable while the image is being built, the real permissions land once
+    // the relocations are applied. This also splits the huge pages the direct
+    // map is made of, which is what lets one section differ from the next.
+    if (!mm::AddressSpace::kernel().protect(window, pages * page_size,
                                             mm::PageFlags::Write | mm::PageFlags::NoExecute)) {
-            mm::free_page(frame);
-            mm::vmalloc_release(window, pages * page_size);
-            return false;
-        }
+        mm::free_pages(frames, pages);
+        return false;
     }
 
     loaded.base = window;
@@ -73,16 +73,13 @@ void release_image(LoadedImage& loaded)
     if (loaded.base == 0)
         return;
 
-    for (usize i = 0; i < loaded.pages; ++i) {
-        const virt_addr page = loaded.base + i * page_size;
-        const phys_addr frame = mm::AddressSpace::kernel().translate(page);
+    // Back to what the direct map promises everywhere else: writable data that
+    // cannot be executed.
+    mm::AddressSpace::kernel().protect(loaded.base, loaded.pages * page_size,
+                                       mm::PageFlags::Write | mm::PageFlags::NoExecute);
 
-        mm::AddressSpace::kernel().unmap(page, page_size);
-        if (frame != 0)
-            mm::free_page(frame & ~(static_cast<phys_addr>(page_size) - 1));
-    }
+    mm::free_pages(mm::virt_to_phys(loaded.base), loaded.pages);
 
-    mm::vmalloc_release(loaded.base, loaded.pages * page_size);
     loaded.base = 0;
     loaded.pages = 0;
 }
@@ -311,7 +308,8 @@ int module_load_image(const void* data, usize length, const char* origin)
     }
 
     if (!allocate_image(loaded, total)) {
-        pr_err("module loader: no memory for %s\n", origin);
+        pr_err("module loader: no memory below %lu MiB for %s\n",
+               static_cast<u64>(image_limit / (1024 * 1024)), origin);
         return -1;
     }
 
@@ -368,6 +366,7 @@ int module_load_image(const void* data, usize length, const char* origin)
 
     if (registered == 0) {
         pr_err("module loader: %s carries no module descriptor\n", origin);
+        symbol_unregister_owner(loaded.base);
         release_image(loaded);
         return -1;
     }

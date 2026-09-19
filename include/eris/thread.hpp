@@ -4,6 +4,7 @@
 #pragma once
 
 #include <eris/compiler.hpp>
+#include <eris/lock.hpp>
 #include <eris/types.hpp>
 
 namespace eris {
@@ -73,6 +74,10 @@ public:
     constexpr WaitQueue() = default;
 
     void wait();
+
+    // Blocks with a lock already held. The lock goes only once the thread is
+    // off the run queue, so a wake up cannot land in between and be lost.
+    void wait(IrqSpinLock& lock, u64 flags);
     void wake_one();
     void wake_all();
 

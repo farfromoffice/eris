@@ -332,8 +332,8 @@ firmware reports is running. Landed on main, part of the 0.4 Orcus milestone.
   and STARTUP. Each core comes up in long mode on the kernel page tables with
   its own stack and descriptors.~~
 - [x] ~~IPIs: a function call broadcast that waits for every core to finish, a TLB
-  shootdown that follows an unmap, and an NMI that stops the others when one
-  core panics.~~
+  shootdown that follows an unmap or a permission change and an NMI that stops
+  the others when one core panics.~~
 - [x] ~~Retrofit: the module table, the page allocator, the heap, the vmalloc
   ranges, the timer queue, the work queue and the console all took locks.~~
 - [ ] x2APIC and per CPU run queues. The first waits for a machine that needs it,
@@ -442,9 +442,9 @@ page back, and loading a module built against a bumped ABI is refused with a
 readable message. Done: `./scripts/module-test.sh` checks all five, including
 that the page count comes back to where it started.
 
-**Traps.** `R_X86_64_PC32` reaches two gigabytes, so module memory has to be
-allocated near the kernel image, which is what keeps the vmalloc area where it
-is. The descriptor layout is shared between the kernel and every image built
+**Traps.** `R_X86_64_PC32` reaches two gigabytes and `R_X86_64_32S` needs the
+address to fit in a signed 32 bit word, so module memory is taken from below
+two gigabytes and refused above it. The descriptor layout is shared between the kernel and every image built
 against it, so adding a field to `ModuleInfo` means bumping the ABI in the same
 commit.
 
@@ -592,91 +592,98 @@ so a thread carries its own syscall stack while it runs a program.
 
 ## Phase 10: graphics and the desktop
 
-**Goal.** A desktop worth showing: a userspace window server on a real
-framebuffer, hardware cursor, smooth redraw, a toolkit, and applications that use
-it. The current in kernel `desktop` module is a placeholder and retires here.
+**Goal.** A desktop worth showing: a real framebuffer, a pointer, a shell that
+manages windows, and applications that are modules of their own. Landed on main
+in a first form, part of the 0.8 Varuna milestone.
 
-**Why now.** Everything it needs exists after phase 9: processes, IPC, a
-framebuffer device, input devices and threads. Building it earlier means building
-it twice.
+**Why now.** Everything it needs exists after phase 9: the loader, the bus, a
+file system, threads and timers.
+
+**How it turned out.** The shell landed as a set of modules rather than the
+userspace window server described below. The reason is the client protocol: it
+is the one decision that cannot be undone once applications depend on it, and
+making it while the compositor was still being written would have fixed it in
+the wrong shape. So the app boundary came first, as an ABI between modules
+(`modules/desktop/app.hpp`), and the move of the shell into a process is a
+later phase that keeps that boundary and replaces what carries it.
 
 ### 10.1 Kernel side, kept deliberately thin
 
-- [ ] `modules/fbdev/`: mode setting, double buffering, a mapping of the framebuffer
-  into a client address space, damage reporting, vsync events where the hardware
-  offers them.
+- [x] ~~`modules/fbdev/`: mode setting through the Bochs display interface, the
+  aperture mapped as device memory, and a blit that never reads it back.~~
 - [ ] `modules/virtio_gpu/`: resource creation, transfers and flushes, plus mode
   setting, so QEMU gets a fast path instead of a scanout copy.
-- [ ] `modules/input/`: an event device with a shared ring buffer, keyboard events
-  with keycodes and modifiers, mouse events with relative motion, buttons and
-  wheel, absolute pointers for tablets and QEMU's absolute mouse.
-- [ ] Hardware cursor plane where available, a composited cursor where not, so the
-  pointer never lags the redraw.
-- [ ] A shared memory mechanism between processes, since window buffers must not be
-  copied twice per frame.
+- [x] ~~`modules/ps2mouse/`: the auxiliary port enabled, packets decoded on
+  IRQ 12, and subscribers called with relative motion and buttons.~~
+- [ ] `modules/input/`: one event device with a shared ring buffer, keycodes and
+  modifiers, wheel, and absolute pointers for tablets.
+- [ ] Hardware cursor plane where available, so the pointer never lags the
+  redraw. The pointer is composited today.
+- [ ] A shared memory mechanism between processes, since window buffers must not
+  be copied twice per frame.
 
 ### 10.2 The window server
 
-`user/wsrv/`, a single process owning the framebuffer:
-
-- [ ] Compositor with a damage model: clients submit buffers, the server composites
-  only the changed rectangles, and a full screen redraw is the exception.
-- [ ] Double or triple buffering with a frame clock, targeting a steady 60 frames per
-  second rather than redrawing as fast as the loop spins.
-- [ ] Window management: stacking order, focus, move and resize, minimise and
-  maximise, snapping, virtual desktops.
-- [ ] Client protocol over the phase 9 IPC: create surface, attach buffer, commit
-  damage, receive input, receive configure events. Versioned from the first
-  commit, because every client depends on it.
-- [ ] Input routing: focus follows click, keyboard grabs, pointer grabs during a
-  drag, a global hotkey path that reaches the server before any client.
+- [x] ~~A compositor with a back buffer: the frame is painted into memory and
+  only the rows that differ from what the screen holds are sent to the
+  aperture, so a still picture costs nothing.~~
+- [x] ~~A frame clock at sixty a second that asks for a frame rather than
+  painting one, so nothing draws with interrupts off.~~
+- [x] ~~Window management: stacking order, focus, dragging by the title bar,
+  minimise, maximise and close, and a taskbar that switches between them.~~
+- [x] ~~Input routing: the pointer picks the window it lands on, clicks raise it,
+  keys go to the focused window, and tab walks the open ones.~~
+- [x] ~~Alpha blended shadows and rounded frames, drawn per frame rather than
+  faked with sleeps.~~
+- [ ] `user/wsrv/`: the same shell as a process owning the framebuffer, with the
+  client protocol over the phase 9 IPC, versioned from the first commit.
 - [ ] Multi monitor once mode setting reports more than one output.
-- [ ] Effects that cost nothing to get right early: alpha blended window shadows,
-  fade in and out, and a smooth minimise, all driven by the frame clock rather
-  than sleeps.
 
 ### 10.3 Rendering and text
 
-`user/libgfx/`:
-
-- [ ] Software rasteriser: filled and stroked rectangles, rounded rectangles, lines,
-  circles, alpha blending, clipping, and a blit fast path for the common case.
-- [ ] Framebuffer format handling and a colour type, so a 32 bit and a 16 bit mode
-  do not fork the drawing code.
-- [ ] Font rendering: a bitmap font to bring text up, then TrueType parsing with a
-  glyph cache, kerning, hinting good enough to be readable, and subpixel or
-  greyscale antialiasing.
-- [ ] Image decoding for at least one format, so icons and wallpapers exist.
-- [ ] Optional later: a tiny scene graph so the toolkit is not redrawing from scratch.
+- [x] ~~A software rasteriser in `modules/desktop/paint.cpp`: fills, rounded
+  rectangles and their borders, discs, rings, lines, gradients, shadows, alpha
+  blending and clipping.~~
+- [x] ~~TrueType parsed and rasterised at run time in
+  `modules/desktop/truetype.cpp`: `cmap`, `loca`, `glyf` and composite glyphs,
+  in 26.6 fixed point with greyscale antialiasing and a glyph cache per face.~~
+- [x] ~~Faces loaded from files rather than compiled into the image. The initrd
+  carries them and `scripts/subset-font.py` cuts them down to what the shell
+  draws.~~
+- [ ] Framebuffer format handling, so a 32 bit and a 16 bit mode do not fork the
+  drawing code. Only 32 bit exists today.
+- [ ] Image decoding for at least one format. Icons are rasterised from SVG at
+  build time by `scripts/gen-icon.py` instead.
 
 ### 10.4 Toolkit and applications
 
-`user/libui/` and `user/apps/`:
-
-- [ ] Widgets: window, layout containers, button, label, text field, list, scroll
-  view, menu, dialog, checkbox, slider, tab strip.
-- [ ] Event loop per application with timers and IPC integrated, so an app never
-  polls.
-- [ ] Theming: colours, spacing, corner radius and font in one place, light and dark,
-  so the system looks like one system.
-- [ ] Applications worth having, in this order: a terminal that is genuinely fast, a
-  file manager, a text editor, a system monitor showing threads and memory, an
-  image viewer, and a settings panel.
-- [ ] A panel and launcher: clock, running applications, a menu, notifications.
+- [x] ~~An application ABI: a module registers a name, a subtitle, an icon and a
+  draw callback, and the shell hands back a painter and a rectangle. An app
+  never touches the framebuffer, the window frame or the pointer.~~
+- [x] ~~Applications as modules of their own under `modules/internal_apps/`:
+  system, modules, console and about, each with its own icon.~~
+- [x] ~~Theming in one place: the shell palette is handed to apps through the
+  painter, so an app does not repeat the same colours.~~
+- [x] ~~A desktop with icons opened by a double click, and a taskbar that
+  switches with one.~~
+- [ ] Widgets: layout containers, button, text field, list, scroll view, menu,
+  dialog. Apps draw themselves today.
+- [ ] An event loop per application with timers, so an app never polls.
+- [ ] A terminal running the shell, a file manager, a text editor and a settings
+  panel. The console app shows the kernel log but does not run anything yet.
 
 Kernel side drivers for this phase are in [the driver program](#the-driver-program),
 tier 4.
 
-**Done when.** The machine boots to a login or straight to a session, the panel
-and wallpaper are drawn, a terminal opens and runs the shell at a usable speed,
-two windows can be dragged over each other without tearing, the pointer stays
-smooth while a window redraws, and killing the window server restarts it without
-taking the system down.
+**Done when.** The machine boots to a session, the wallpaper, the panel and the
+taskbar are drawn, applications open in windows that can be dragged over each
+other without tearing, and the pointer stays smooth while a window redraws. The
+remaining half of the phase is the move into userspace.
 
-**Traps.** A compositor that redraws the whole screen per frame will look fine on
-QEMU and terrible on real hardware, so build the damage model first, not after.
+**Traps.** A compositor that sends the whole screen per frame looks fine until
+the aperture is real memory on a real card, so the damage model came first.
 Deciding the client protocol casually is the mistake that is impossible to undo
-once three applications depend on it.
+once three applications depend on it, which is why the shell is still a module.
 
 ## Phase 11: audio
 
@@ -1241,7 +1248,7 @@ the work is in, not whether a release went out.
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | work on main, unreleased |
 | 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | work on main, unreleased |
 | 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | work on main, unreleased |
-| 0.8 | Varuna | Phase 10. Window server, toolkit, terminal, panel | planned |
+| 0.8 | Varuna | Phase 10. Window server, toolkit, terminal, panel | in progress on main |
 | 0.9 | Ixion | Phases 11 and 12. Audio, USB, boots on real hardware | planned |
 | 1.0 | Charon | Phases 13 and 14. Power management, hardening, self hosting, the installer | planned |
 

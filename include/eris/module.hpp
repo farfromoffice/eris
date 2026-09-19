@@ -13,6 +13,7 @@ enum class ModuleState : u8 {
     Registered,
     Loading,
     Ready,
+    Unloading,
     Failed,
 };
 
@@ -21,7 +22,7 @@ using ModuleExitFn = void (*)();
 
 // Bumped whenever the shape of anything a module links against changes, so a
 // stale image is refused instead of faulting on the first call.
-inline constexpr u32 module_abi_version = 1;
+inline constexpr u32 module_abi_version = 2;
 
 struct ModuleInfo {
     u32 abi;
@@ -63,6 +64,25 @@ usize module_count();
 
 bool module_get(const char* name);
 void module_put(const char* name);
+
+// The same reference taken on whichever module owns this address. Code that
+// keeps a pointer into a module image, a stored callback for instance, holds
+// one of these so the image can't be freed under it. Returns false, and takes
+// nothing, when the address belongs to the kernel or to a builtin module:
+// neither of those ever goes away.
+bool module_get_owner(const void* address);
+void module_put_owner(const void* address);
+
+// A copy of what the table says about one module, so a caller never holds a
+// pointer into an image that can be unloaded. Strings are truncated to fit.
+struct ModuleSnapshot {
+    char name[32];
+    char version[16];
+    char license[32];
+    ModuleState state;
+};
+
+bool module_snapshot(usize index, ModuleSnapshot& out);
 
 const char* module_state_name(ModuleState state);
 

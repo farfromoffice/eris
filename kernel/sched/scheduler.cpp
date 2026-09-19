@@ -408,6 +408,25 @@ void WaitQueue::wait()
     sched_lock.unlock(flags);
 }
 
+void WaitQueue::wait(IrqSpinLock& lock, u64 flags)
+{
+    sched_lock.lock();
+
+    Thread* self = current_thread();
+    Scheduler::block_on(head_, self);
+
+    // Interrupts stay off across the handover, so the caller's flags are
+    // restored by whoever resumes this thread rather than here.
+    lock.unlock(0);
+
+    Thread* next = Scheduler::dequeue();
+    if (next == nullptr)
+        next = Scheduler::idle_thread_of(arch::this_cpu());
+
+    Scheduler::switch_to(next);
+    sched_lock.unlock(flags);
+}
+
 void WaitQueue::wake_one()
 {
     IrqGuard guard(sched_lock);
