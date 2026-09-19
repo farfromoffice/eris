@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 // Copyright (c) 2026 farfromoffice
 
+#include <eris/atomic.hpp>
 #include <eris/export.hpp>
 #include <eris/module.hpp>
 #include <eris/module_api.hpp>
@@ -96,6 +97,59 @@ constinit Slot slots[max_apps]{};
 constinit usize slot_count = 0;
 constinit u8 order[max_apps]{};
 constinit i8 focus = -1;
+
+// Unregistering an app frees the image its draw function lives in, so no frame
+// may be inside one when it happens. Readers skip instead of waiting: one of
+// them is an interrupt handler and a module can't take a kernel lock.
+constinit Atomic<u32> slot_readers{0};
+constinit Atomic<u32> registry_busy{0};
+
+// Announce, then check. The writer does the same in the other order and the
+// barrier between the two is what stops both sides slipping past each other.
+bool slots_enter()
+{
+    slot_readers.fetch_add(1);
+    memory_barrier();
+
+    if (registry_busy.load() != 0) {
+        slot_readers.fetch_sub(1);
+        return false;
+    }
+
+    return true;
+}
+
+struct SlotGuard {
+    SlotGuard() : held(slots_enter()) {}
+    ~SlotGuard()
+    {
+        if (held)
+            slot_readers.fetch_sub(1);
+    }
+
+    SlotGuard(const SlotGuard&) = delete;
+    SlotGuard& operator=(const SlotGuard&) = delete;
+
+    const bool held;
+};
+
+// Runs in a module init or exit, so it can yield: on one core the frame it
+// waits for is on the work thread.
+struct RegistryChange {
+    RegistryChange()
+    {
+        registry_busy.store(1);
+        memory_barrier();
+
+        while (slot_readers.load() != 0)
+            eris_yield();
+    }
+
+    ~RegistryChange() { registry_busy.store(0); }
+
+    RegistryChange(const RegistryChange&) = delete;
+    RegistryChange& operator=(const RegistryChange&) = delete;
+};
 
 constinit i32 pointer_x = 0;
 constinit i32 pointer_y = 0;
@@ -647,6 +701,10 @@ void present()
 
 void paint_frame()
 {
+    SlotGuard guard;
+    if (!guard.held)
+        return;
+
     const usize pixels = static_cast<usize>(screen_width) * screen_height;
 
     for (usize i = 0; i < pixels; ++i)
@@ -693,6 +751,10 @@ void paint_frame()
 void on_key(char c)
 {
     if (!running)
+        return;
+
+    SlotGuard guard;
+    if (!guard.held)
         return;
 
     if (c == '\t') {
@@ -799,6 +861,10 @@ void handle_press()
 void on_mouse(i32 dx, i32 dy, u8 buttons)
 {
     if (!running)
+        return;
+
+    SlotGuard guard;
+    if (!guard.held)
         return;
 
     pointer_visible = true;
@@ -1038,6 +1104,8 @@ bool desktop_register_app(const DesktopApp* app)
     if (app == nullptr || app->name == nullptr || slot_count >= max_apps)
         return false;
 
+    RegistryChange change;
+
     for (eris::usize i = 0; i < slot_count; ++i) {
         if (slots[i].app == app)
             return true;
@@ -1051,9 +1119,13 @@ bool desktop_register_app(const DesktopApp* app)
     return true;
 }
 
+// Returns once nothing is drawing this app any more, which is what lets the
+// module framework free the image its draw function and icon live in.
 void desktop_unregister_app(const DesktopApp* app)
 {
     using namespace eris::modules;
+
+    RegistryChange change;
 
     for (eris::usize i = 0; i < slot_count; ++i) {
         if (slots[i].app != app)
@@ -1079,6 +1151,10 @@ bool desktop_app_registered(const char* name)
     using namespace eris::modules;
 
     if (name == nullptr)
+        return false;
+
+    SlotGuard guard;
+    if (!guard.held)
         return false;
 
     for (eris::usize i = 0; i < slot_count; ++i) {

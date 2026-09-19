@@ -281,6 +281,12 @@ console app shows the same stream inside a window.
 * The desktop paints into memory and sends only the rows that differ from what
   the screen already holds. Writes to the aperture are slow enough to be seen,
   so a still picture sends nothing at all.
+* `desktop_unregister_app` returns only once nothing is drawing that app any
+  more because the unload frees the image its `draw` and its icon live in the
+  moment the app's exit returns. The app list has one writer at a time and
+  readers that never wait: a frame or an input event that lands while the list
+  is changing is skipped, and the next frame draws the new list. Registration
+  goes through the same handshake, so half an entry is never visible.
 * The frame timer only asks for a frame, it never paints one. Painting takes
   milliseconds and runs on the work thread, and the request flag is cleared
   after the frame rather than before, or two cores paint the same canvas at
