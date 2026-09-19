@@ -11,6 +11,7 @@
 #include <eris/paging.hpp>
 #include <eris/printk.hpp>
 #include <eris/string.hpp>
+#include <eris/thread.hpp>
 #include <eris/time.hpp>
 
 extern "C" {
@@ -89,6 +90,8 @@ extern "C" void ap_entry()
     idt_init();
     lapic_init_cpu();
 
+    sched_start_cpu();
+
     cpus_online.fetch_add(1);
     cpu.online = true;
 
@@ -106,6 +109,7 @@ extern "C" void ap_entry()
             job_finished.fetch_add(1);
         }
 
+        yield();
         cpu_relax();
     }
 }

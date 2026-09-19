@@ -34,6 +34,9 @@ struct PerCpu {
     bool online;
     virt_addr kernel_stack_top;
     u64 interrupts;
+    void* current_thread;
+    void* idle_thread;
+    u32 preempt_count;
     u64 gdt[7];
     Tss tss;
 };

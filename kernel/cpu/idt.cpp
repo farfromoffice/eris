@@ -9,6 +9,7 @@
 #include <eris/compiler.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
+#include <eris/thread.hpp>
 #include <eris/time.hpp>
 
 extern "C" void* isr_stub_table[256];
@@ -161,6 +162,7 @@ extern "C" void isr_dispatch(Registers& regs)
     if (regs.vector == vector_lapic_timer) {
         lapic_eoi();
         timers_run();
+        sched_tick();
         return;
     }
 
