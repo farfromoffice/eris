@@ -262,8 +262,12 @@ console app shows the same stream inside a window.
   first fit with block merging, grows when an allocation does not fit and never
   shrinks.
 * The page allocator manages the first four GiB only, because that is all the
-  direct map covers. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
-  whatever sits after `__kernel_end`.
+  direct map covers. Its bitmap is a 128 KiB array in `.bss`, so it doesn't
+  depend on whatever sits after `__kernel_end`.
+* `total_pages` is the memory the firmware map says is there, not the range the
+  bitmap covers. A machine with two gigabytes has most of that range absent
+  rather than in use and counting it as used had the boot report and the
+  system app claim gigabytes were gone before anything ran.
 * `page_alloc_init` reserves the low megabyte, the kernel image and the data the
   bootloader left behind, the multiboot info block and the module strings
   included. Handing those pages out corrupts the memory map while it is read.
