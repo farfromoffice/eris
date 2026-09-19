@@ -3,6 +3,7 @@
 
 KERNEL   := build/eris.elf
 KERNEL32 := build/eris32.elf
+INITRD   := build/initrd.tar
 ISO      := build/eris.iso
 
 CXX      := g++
@@ -21,7 +22,17 @@ CXXFLAGS := -std=c++23 -O2 -ffreestanding -fno-exceptions -fno-rtti \
 ASMFLAGS := -f elf64
 LDFLAGS  := -n -nostdlib --no-warn-rwx-segments -T linker/kernel.ld
 
-CXX_SRCS := $(wildcard kernel/*.cpp) $(wildcard kernel/*/*.cpp) $(wildcard modules/*/*.cpp)
+# Modules named here are linked into the image. Everything else under modules/
+# is built as a loadable object and packed into the initrd.
+BUILTIN_MODULES ?= vga keyboard
+ALL_MODULES := $(notdir $(patsubst %/,%,$(wildcard modules/*/)))
+LOADABLE_MODULES := $(filter-out $(BUILTIN_MODULES),$(ALL_MODULES))
+
+BUILTIN_SRCS := $(foreach m,$(BUILTIN_MODULES),$(wildcard modules/$(m)/*.cpp))
+LOADABLE_SRCS := $(foreach m,$(LOADABLE_MODULES),modules/$(m)/$(m).cpp)
+KOBJS := $(foreach m,$(LOADABLE_MODULES),build/modules/$(m).ko)
+
+CXX_SRCS := $(wildcard kernel/*.cpp) $(wildcard kernel/*/*.cpp) $(BUILTIN_SRCS)
 TRAMPOLINE_SRC := kernel/cpu/trampoline.asm
 ASM_SRCS := $(filter-out $(TRAMPOLINE_SRC),$(wildcard boot/*.asm) $(wildcard kernel/*/*.asm))
 
@@ -29,9 +40,11 @@ OBJS := $(patsubst %.cpp,build/%.o,$(CXX_SRCS)) $(patsubst %.asm,build/%.o,$(ASM
         build/trampoline.o
 DEPS := $(patsubst %.cpp,build/%.d,$(CXX_SRCS))
 
+.SECONDEXPANSION:
+
 .PHONY: all clean run run-serial iso
 
-all: $(KERNEL) $(KERNEL32)
+all: $(KERNEL) $(KERNEL32) $(INITRD)
 
 # Two link passes: the first one exists so the symbol table can be generated
 # from it, the second one carries that table. The table is regenerated from the
@@ -51,6 +64,15 @@ $(KERNEL): $(OBJS) linker/kernel.ld scripts/gen-ksyms.sh
 $(KERNEL32): $(KERNEL)
 	$(OBJCOPY) -O elf32-i386 $< $@
 
+# A loadable module is the relocatable object itself, the loader resolves it
+# against the exported symbols at run time.
+build/modules/%.ko: modules/%/$$*.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(INITRD): $(KOBJS) scripts/mkinitrd.sh
+	./scripts/mkinitrd.sh $@ $(KOBJS)
+
 build/%.o: %.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -68,11 +90,11 @@ build/%.o: %.asm
 	@mkdir -p $(dir $@)
 	$(ASM) $(ASMFLAGS) $< -o $@
 
-run: $(KERNEL32)
-	qemu-system-x86_64 -kernel $(KERNEL32) -serial stdio -m 512M
+run: $(KERNEL32) $(INITRD)
+	qemu-system-x86_64 -kernel $(KERNEL32) -initrd $(INITRD) -serial stdio -m 512M
 
-run-serial: $(KERNEL32)
-	qemu-system-x86_64 -kernel $(KERNEL32) -serial stdio -display none -m 512M
+run-serial: $(KERNEL32) $(INITRD)
+	qemu-system-x86_64 -kernel $(KERNEL32) -initrd $(INITRD) -serial stdio -display none -m 512M
 
 iso: $(KERNEL)
 	@mkdir -p build/iso/boot/grub
