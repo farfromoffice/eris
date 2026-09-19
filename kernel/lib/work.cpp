@@ -68,7 +68,17 @@ void work_thread(void*)
 {
     for (;;) {
         work_run_pending();
-        thread_sleep_ms(10);
+
+        // Sleeping on the queue rather than on a timer is what keeps a queued
+        // item waiting microseconds instead of ten milliseconds.
+        const u64 flags = queue_lock.lock();
+
+        if (head != tail) {
+            queue_lock.unlock(flags);
+            continue;
+        }
+
+        waiting.wait(queue_lock, flags);
     }
 }
 
