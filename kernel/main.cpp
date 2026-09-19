@@ -489,7 +489,9 @@ void load_initrd_modules()
 void module_selftest()
 {
     // A leaf is the only honest guinea pig here: a module something else
-    // depends on refuses to unload, and rightly so.
+    // depends on refuses to unload, and rightly so. The disk driver is a leaf
+    // in the descriptor graph but a mounted disk holds a reference on it.
+    // Check that too rather than asking for an unload that can't happen.
     const char* name = "virtio_blk";
 
     const char* file = "virtio_blk.ko";
@@ -504,6 +506,13 @@ void module_selftest()
     const Module* module = module_find(name);
     if (module == nullptr || module->state != ModuleState::Ready) {
         pr_err("module selftest: %s did not load from the initrd\n", name);
+        return;
+    }
+
+    if (module->dependents.held() || module->users.held()) {
+        pr_info("module selftest: %s is in use, dependents=%u users=%u, "
+                "leaving it alone\n",
+                name, module->dependents.value(), module->users.value());
         return;
     }
 

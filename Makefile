@@ -47,12 +47,15 @@ USER_CFLAGS := -std=gnu17 -O2 -ffreestanding -mcmodel=large -fno-stack-protector
 
 
 CXX_SRCS := $(wildcard kernel/*.cpp) $(wildcard kernel/*/*.cpp) $(BUILTIN_SRCS)
+LOADABLE_SRCS := $(foreach m,$(LOADABLE_MODULES),$(wildcard $(call module_dir,$(m))/*.cpp))
 TRAMPOLINE_SRC := kernel/cpu/trampoline.asm
 ASM_SRCS := $(filter-out $(TRAMPOLINE_SRC),$(wildcard boot/*.asm) $(wildcard kernel/*/*.asm))
 
 OBJS := $(patsubst %.cpp,build/%.o,$(CXX_SRCS)) $(patsubst %.asm,build/%.o,$(ASM_SRCS)) \
         build/trampoline.o
-DEPS := $(patsubst %.cpp,build/%.d,$(CXX_SRCS))
+# The loadable modules need their header dependencies tracked too or a change
+# to the module ABI leaves a stale .ko in the initrd that the kernel refuses.
+DEPS := $(patsubst %.cpp,build/%.d,$(CXX_SRCS) $(LOADABLE_SRCS))
 
 .SECONDEXPANSION:
 

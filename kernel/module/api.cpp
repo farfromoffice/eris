@@ -11,6 +11,7 @@
 #include <eris/pci.hpp>
 #include <eris/printk.hpp>
 #include <eris/module.hpp>
+#include <eris/module_api.hpp>
 #include <eris/thread.hpp>
 #include <eris/string.hpp>
 #include <eris/version.hpp>
@@ -46,6 +47,18 @@ constinit SinkConsole sink_console{};
 // A module handler only needs to know that its line fired, so the register
 // frame stops here rather than becoming part of the module ABI.
 constinit void (*module_handlers[16])(void*){};
+
+void copy_into(char* destination, eris::usize size, const char* source)
+{
+    eris::usize i = 0;
+    if (source != nullptr) {
+        while (i + 1 < size && source[i] != '\0') {
+            destination[i] = source[i];
+            ++i;
+        }
+    }
+    destination[i] = '\0';
+}
 
 void module_irq_trampoline(eris::arch::Registers& regs)
 {
@@ -223,22 +236,19 @@ eris::usize eris_module_count()
     return eris::module_count();
 }
 
-bool eris_module_at(eris::usize index, const char** name, const char** version,
-                    const char** license, const char** state)
+bool eris_module_at(eris::usize index, ErisModuleInfo* out)
 {
-    const eris::Module* module = eris::module_at(index);
-    if (module == nullptr || module->info == nullptr)
+    if (out == nullptr)
         return false;
 
-    if (name != nullptr)
-        *name = module->info->name;
-    if (version != nullptr)
-        *version = module->info->version;
-    if (license != nullptr)
-        *license = module->info->license;
-    if (state != nullptr)
-        *state = eris::module_state_name(module->state);
+    eris::ModuleSnapshot snapshot{};
+    if (!eris::module_snapshot(index, snapshot))
+        return false;
 
+    copy_into(out->name, sizeof(out->name), snapshot.name);
+    copy_into(out->version, sizeof(out->version), snapshot.version);
+    copy_into(out->license, sizeof(out->license), snapshot.license);
+    copy_into(out->state, sizeof(out->state), eris::module_state_name(snapshot.state));
     return true;
 }
 

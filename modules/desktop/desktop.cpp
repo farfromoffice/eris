@@ -112,6 +112,7 @@ constinit u64 last_click_at = 0;
 constinit i32 last_click_target = -1;
 
 constinit bool running = false;
+constinit u32 frame_timer = 0;
 constinit u64 frames_drawn = 0;
 constinit u64 started_at = 0;
 
@@ -978,7 +979,7 @@ int desktop_init()
 
     // Sixty times a second is enough for a clock and a log. Every frame is a
     // full repaint into memory and only the changed rows reach the screen.
-    eris_timer_every(16000000, redraw, nullptr);
+    frame_timer = eris_timer_every(16000000, redraw, nullptr);
 
     pr_module_info("desktop: %d by %d, %lu KiB back buffer, pointer %s\n",
                    screen_width, screen_height, static_cast<u64>(bytes / 1024),
@@ -989,6 +990,13 @@ int desktop_init()
 void desktop_exit()
 {
     running = false;
+
+    // The frame timer holds the address of redraw, that is about to go back
+    // to the allocator with the rest of the image.
+    if (frame_timer != 0) {
+        eris_timer_cancel(frame_timer);
+        frame_timer = 0;
+    }
 
     mouse_unsubscribe(on_mouse);
     keyboard_unsubscribe(on_key);

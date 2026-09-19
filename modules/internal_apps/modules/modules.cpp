@@ -49,13 +49,14 @@ void draw(const DesktopPainter* painter, i32 x, i32 y, i32 width, i32 height, bo
     cursor_y += 24;
 
     for (usize i = 0; i < count && cursor_y < y + height - 20; ++i) {
-        const char* name = nullptr;
-        const char* version = nullptr;
-        const char* license = nullptr;
-        const char* state = nullptr;
+        ErisModuleInfo entry{};
 
-        if (!eris_module_at(i, &name, &version, &license, &state))
+        if (!eris_module_at(i, &entry))
             continue;
+
+        const char* name = entry.name;
+        const char* version = entry.version;
+        const char* state = entry.state;
 
         const bool ready = starts_with(state, "ready");
         const bool app = desktop_app_registered(name);

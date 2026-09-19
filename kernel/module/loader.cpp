@@ -363,6 +363,7 @@ int module_load_image(const void* data, usize length, const char* origin)
 
     if (registered == 0) {
         pr_err("module loader: %s carries no module descriptor\n", origin);
+        symbol_unregister_owner(loaded.base);
         release_image(loaded);
         return -1;
     }

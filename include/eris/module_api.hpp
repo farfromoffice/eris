@@ -54,8 +54,17 @@ eris::usize eris_cpu_count();
 void eris_version(const char** version, const char** name);
 
 eris::usize eris_module_count();
-bool eris_module_at(eris::usize index, const char** name, const char** version,
-                    const char** license, const char** state);
+
+// Filled with copies because the strings a module descriptor points at live
+// inside that module's image and an unload takes them with it.
+struct ErisModuleInfo {
+    char name[32];
+    char version[16];
+    char license[32];
+    char state[16];
+};
+
+bool eris_module_at(eris::usize index, ErisModuleInfo* out);
 
 eris::u64 eris_file_size(const char* path);
 eris::i64 eris_file_read(const char* path, void* buffer, eris::usize length);

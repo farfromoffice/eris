@@ -2,6 +2,8 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/apic.hpp>
+#include <eris/atomic.hpp>
+#include <eris/cpu.hpp>
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/lock.hpp>
@@ -29,6 +31,7 @@ constinit TimerHandle next_handle = 1;
 constinit u64 tick_count = 0;
 constinit bool lapic_driven = false;
 constinit IrqSpinLock timer_lock{};
+constinit Atomic<u64> sweeps[arch::max_cpus]{};
 
 Timer* find_free()
 {
@@ -153,8 +156,45 @@ void timer_cancel(TimerHandle handle)
     }
 }
 
+usize timer_cancel_owner(virt_addr base, usize length)
+{
+    usize cancelled = 0;
+
+    {
+        IrqGuard guard(timer_lock);
+
+        for (auto& timer : timers) {
+            const auto address = reinterpret_cast<virt_addr>(timer.callback);
+            if (!timer.active || address < base || address - base >= length)
+                continue;
+
+            timer.active = false;
+            ++cancelled;
+        }
+
+        program_next();
+    }
+
+    // Snapshot first, then wait out whichever sweeps were already running.
+    u64 seen[arch::max_cpus];
+    for (usize i = 0; i < arch::max_cpus; ++i)
+        seen[i] = sweeps[i].load();
+
+    for (usize i = 0; i < arch::max_cpus; ++i) {
+        if (seen[i] % 2 == 0)
+            continue;
+        while (sweeps[i].load() == seen[i])
+            cpu_relax();
+    }
+
+    return cancelled;
+}
+
 void timers_run()
 {
+    Atomic<u64>& sweep = sweeps[arch::this_cpu().index];
+    sweep.fetch_add(1);
+
     const u64 now = monotonic_ns();
 
     for (auto& timer : timers) {
@@ -173,6 +213,7 @@ void timers_run()
     }
 
     program_next();
+    sweep.fetch_add(1);
 }
 
 u64 ticks()
