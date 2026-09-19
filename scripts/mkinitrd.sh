@@ -17,15 +17,21 @@ shift
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT
 
-mkdir -p "$staging/modules"
+mkdir -p "$staging/modules" "$staging/bin"
 
-for module in "$@"; do
-    [[ -f $module ]] || continue
-    cp "$module" "$staging/modules/"
+for file in "$@"; do
+    [[ -f $file ]] || continue
+
+    if [[ $file == *.ko ]]; then
+        cp "$file" "$staging/modules/"
+    else
+        cp "$file" "$staging/bin/"
+    fi
 done
 
 mkdir -p "$(dirname "$output")"
-tar --format=ustar -C "$staging" -cf "$output" modules
+tar --format=ustar -C "$staging" -cf "$output" modules bin
 
-count=$(find "$staging/modules" -name '*.ko' | wc -l)
-echo "initrd: $output with $count module$([[ $count -eq 1 ]] || echo s)"
+modules=$(find "$staging/modules" -name '*.ko' | wc -l)
+programs=$(find "$staging/bin" -type f | wc -l)
+echo "initrd: $output with $modules module$([[ $modules -eq 1 ]] || echo s) and $programs program$([[ $programs -eq 1 ]] || echo s)"

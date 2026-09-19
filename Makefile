@@ -7,6 +7,7 @@ INITRD   := build/initrd.tar
 ISO      := build/eris.iso
 
 CXX      := g++
+CC       := gcc
 LD       := ld
 ASM      := nasm
 OBJCOPY  := objcopy
@@ -31,6 +32,14 @@ LOADABLE_MODULES := $(filter-out $(BUILTIN_MODULES),$(ALL_MODULES))
 BUILTIN_SRCS := $(foreach m,$(BUILTIN_MODULES),$(wildcard modules/$(m)/*.cpp))
 LOADABLE_SRCS := $(foreach m,$(LOADABLE_MODULES),modules/$(m)/$(m).cpp)
 KOBJS := $(foreach m,$(LOADABLE_MODULES),build/modules/$(m).ko)
+
+# Userspace. Freestanding and static, linked well above anything the kernel
+# maps, and packed into the initrd next to the modules.
+USER_PROGRAMS := init crash
+USER_BINARIES := $(foreach p,$(USER_PROGRAMS),build/user/$(p))
+USER_CFLAGS := -std=gnu17 -O2 -ffreestanding -mcmodel=large -fno-stack-protector -fno-pic \
+               -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -Wall -Wextra -Werror \
+
 
 CXX_SRCS := $(wildcard kernel/*.cpp) $(wildcard kernel/*/*.cpp) $(BUILTIN_SRCS)
 TRAMPOLINE_SRC := kernel/cpu/trampoline.asm
@@ -70,8 +79,19 @@ build/modules/%.ko: modules/%/$$*.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(INITRD): $(KOBJS) scripts/mkinitrd.sh
-	./scripts/mkinitrd.sh $@ $(KOBJS)
+build/user/crt0.o: user/lib/crt0.asm
+	@mkdir -p $(dir $@)
+	$(ASM) $(ASMFLAGS) $< -o $@
+
+build/user/%.o: user/$$*/$$*.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/%: build/user/%.o build/user/crt0.o user/link.ld
+	$(LD) -n -nostdlib -T user/link.ld -o $@ build/user/crt0.o $<
+
+$(INITRD): $(KOBJS) $(USER_BINARIES) scripts/mkinitrd.sh
+	./scripts/mkinitrd.sh $@ $(KOBJS) $(USER_BINARIES)
 
 build/%.o: %.cpp
 	@mkdir -p $(dir $@)
