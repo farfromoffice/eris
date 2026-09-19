@@ -79,7 +79,8 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 8. `timers_init`, `arch::sti`, `arch::smp_init`, then `sched_init`
 9. `work_start` and the `kinit` thread, which carries the rest of the boot
    sequence: `module_init_builtin`, `pci::init`, the initrd load,
-   `report_modules` and whichever self tests the command line asked for
+   the mounts, `report_modules` and whichever self tests the command line
+   asked for
 10. the boot CPU falls into its idle loop, and every other core is already in
     one of its own
 
@@ -108,6 +109,11 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/device.hpp` | `Device`, `BusDevice`, `Driver`, the registry that binds them |
 | `eris/pci.hpp` | Configuration space, enumeration, BAR decoding, capabilities |
 | `eris/module_api.hpp` | The C ABI a loadable module is allowed to call |
+| `eris/block.hpp` | `BlockDevice`, the registry, byte granular reads |
+| `eris/vfs.hpp` | `Inode`, `FileSystem`, mount, resolve, read, write, list |
+| `eris/ramfs.hpp` | Files in the heap |
+| `eris/devfs.hpp` | Devices as files |
+| `eris/ext2.hpp` | Mounting an ext2 image read only |
 | `eris/export.hpp` | `ERIS_EXPORT_SYMBOL`, `symbol_lookup` |
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
@@ -236,6 +242,11 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   `build/initrd.tar` as a `.ko`.
 * `R_X86_64_PC32` reaches two gigabytes, which is why module images come from
   the vmalloc area rather than anywhere else.
+* Mounts are set up after the modules load, because storage arrives as a
+  module. The root is ramfs, `/dev` is devfs, and `/mnt` is whatever ext2 image
+  the first block device carries.
+* ext2 is read only. The group descriptors live in the block after the
+  superblock, which is block 2 at a 1 KiB block size and block 1 above that.
 * The bus is walked before the loadable modules arrive, so a driver finds its
   device the moment its init runs.
 * A loaded image brings its own export table. The loader runs the image's
@@ -296,6 +307,7 @@ CPUS=8 ./scripts/smp-test.sh
 CPUS=4 ./scripts/thread-test.sh
 ./scripts/module-test.sh
 ./scripts/device-test.sh
+./scripts/fs-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning

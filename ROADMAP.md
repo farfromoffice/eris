@@ -23,7 +23,7 @@ here.
 10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling) (done)
 11. [Phase 6: loadable modules](#phase-6-loadable-modules) (done)
 12. [Phase 7: buses and devices](#phase-7-buses-and-devices) (mostly done)
-13. [Phase 8: storage and a file system](#phase-8-storage-and-a-file-system)
+13. [Phase 8: storage and a file system](#phase-8-storage-and-a-file-system) (mostly done)
 14. [Phase 9: userspace](#phase-9-userspace)
 15. [Phase 10: graphics and the desktop](#phase-10-graphics-and-the-desktop)
 16. [Phase 11: audio](#phase-11-audio)
@@ -43,6 +43,9 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga` and
 `keyboard` built in, `desktop` loaded from the initrd.
+
+Phase 8 put files on top: ramfs at the root, devfs at `/dev`, and a read only
+ext2 on the virtio disk, all reachable through one path walker.
 
 Phase 7 gave drivers a bus to find hardware on: PCI is enumerated at boot, a
 loadable module drives a real virtio disk through the exported kernel ABI, and
@@ -155,7 +158,7 @@ either.
 | Scheduling | Kernel threads, round robin, wait queues, preemption | Per CPU run queues, priorities, fair policy | mostly done |
 | Loadable modules | Relocatable images from an initrd, versioned ABI, clean unload | Autoload by device id, module GOT | mostly done |
 | Device discovery | PCI enumeration, driver matching, virtio-blk, rtc | MSI, MMCONFIG, AHCI, framebuffer | mostly done |
-| Storage and VFS | None | Block layer, VFS, ramfs, devfs, an on disk file system | 8 |
+| Storage and VFS | Block layer, VFS, ramfs, devfs, ext2 read only | Buffer cache, request queues, writing to disk | mostly done |
 | Userspace | None, everything ring 0 | Syscalls, ELF loading, processes, signals, a small libc | 9 |
 | Graphics | Kernel side VGA text desktop | Framebuffer device, userspace window server, toolkit, apps | 10 |
 | Audio | None | Mixer, stream API, an HDA or virtio-sound driver | 11 |
@@ -491,54 +494,43 @@ and returning an error from its init just makes the boot log lie.
 
 ## Phase 8: storage and a file system
 
-**Goal.** The kernel can read and write files.
-
-**Why now.** Configuration, logs, module images and userspace binaries all live
-in files. Nothing after this phase works without it.
+**Goal.** The kernel can read and write files. Landed on main, part of the 0.6
+Haumea milestone.
 
 **Work**
 
-- [ ] `kernel/block/block.cpp`: block device interface, request structures, a queue
-  per device, a completion callback, and a thread per device draining the queue.
-- [ ] Buffer cache keyed by device and block, write back with an explicit flush, so
-  the file system is not doing IO one sector at a time.
-- [ ] `kernel/fs/vfs.cpp`, `include/eris/vfs.hpp`:
+- [x] ~~`include/eris/block.hpp` and `kernel/block/block.cpp`: the interface a
+  storage driver provides, a registry of the devices that answered, and a
+  byte granular read that bounces through a sector buffer, because a device only
+  ever moves whole sectors.~~
+- [x] ~~A driver living in a loadable module exports plain functions, so the block
+  layer wraps those in the interface everything above it expects. That is how
+  `virtio_blk` becomes `vda` without the block layer knowing what virtio is.~~
+- [x] ~~`kernel/fs/vfs.cpp`: inodes, a mount table, a path walker that picks the
+  mount with the longest matching prefix, and the handful of calls above it:
+  resolve, stat, read, write and a directory listing that hands back one entry
+  at a time so nothing has to allocate.~~
+- [x] ~~`kernel/fs/ramfs.cpp`: files in the heap, growing as they are written.
+  The first mount and where a scratch file goes until there is a disk.~~
+- [x] ~~`kernel/fs/devfs.cpp`: every block device as a node, plus the console.
+  Reading `/dev/vda` reads the disk, writing `/dev/console` prints.~~
+- [x] ~~`kernel/fs/ext2.cpp`: superblock, group descriptors, inode tables,
+  direct and singly indirect blocks, directory walking. Read only, because
+  writing means bitmaps and a lot of care nothing needs yet.~~
+- [ ] Buffer cache, a request queue with a thread per device, writing to ext2,
+  FAT32, and loading modules from a mounted file system rather than the initrd.
+  The first three are the next natural step, the last one waits until there is
+  a disk worth booting from.
 
-  ```cpp
-  namespace eris::fs {
-  class Inode { public: virtual isize read(u64 offset, void* buffer, usize length) = 0; /* ... */ };
-  class FileSystem { public: virtual Inode* root() = 0; virtual const char* name() const = 0; };
-  int mount(const char* path, FileSystem* fs);
-  int open(const char* path, int flags);
-  isize read(int fd, void* buffer, usize length);
-  isize write(int fd, const void* buffer, usize length);
-  int stat(const char* path, Stat& out);
-  }
-  ```
+**Done when.** The kernel mounts ramfs at the root, devfs at `/dev`, opens a
+device node and writes to it, mounts an ext2 image from `virtio-blk` and reads a
+file from it. Done: `./scripts/fs-test.sh` builds the image with `mke2fs`, puts
+a known file in it with `debugfs`, and checks the kernel reads the same bytes
+back.
 
-  with a path walker, a dentry cache, mount points and file descriptor tables
-  that will later be per process.
-- [ ] `modules/ramfs/`: in memory files and directories, the first mount, and the
-  place `/tmp` lives forever after.
-- [ ] `modules/devfs/`: every `Device` visible as a node, consoles, block devices,
-  the framebuffer, input devices.
-- [ ] `modules/ext2/`: read only first, superblock, block groups, inodes, directory
-  walking, indirect blocks, then writing, then journalling never.
-- [ ] `modules/fat32/`: because an EFI system partition is FAT and real machines need
-  it.
-- [ ] Module loading from the file system, retiring the initrd path to a bootstrap
-  role only.
-- [ ] Kernel log to a file once a writable file system is mounted, with the ring
-  buffer carried over from early boot.
-
-**Done when.** The kernel mounts ramfs at the root, devfs at `/dev`, opens
-`/dev/serial0` and writes to it, mounts an ext2 image from `virtio-blk`, reads a
-file from it, and loads a module out of that file system.
-
-**Traps.** The buffer cache and the block queue are the first structures with
-real concurrency, so phase 4 primitives are not optional here. Path walking with
-symlinks and mount points crossing each other is where every kernel grows its
-first ugly function, so keep the walker small and tested.
+**Traps.** The ext2 group descriptors sit in the block after the superblock,
+which is block 2 at a 1 KiB block size and block 1 at anything larger, and
+getting that wrong reads an inode table full of zeroes rather than failing.
 
 ## Phase 9: userspace
 
@@ -1203,7 +1195,7 @@ Not a phase, work that grows with each of the above.
 5  threads ................ done
 6  loadable modules ....... done
 7  buses and devices ...... done enough for 8
-8  storage and VFS ........ needs 7
+8  storage and VFS ........ done enough for 9
 9  userspace .............. needs 2, 5, 8
 10 graphics and desktop ... needs 7, 9
 11 audio .................. needs 7, 9
@@ -1236,7 +1228,7 @@ the work is in, not whether a release went out.
 | 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | work on main, unreleased |
 | 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | work on main, unreleased |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | work on main, unreleased |
-| 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | phase 7 on main, unreleased |
+| 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | work on main, unreleased |
 | 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | planned |
 | 0.8 | Varuna | Phase 10. Window server, toolkit, terminal, panel | planned |
 | 0.9 | Ixion | Phases 11 and 12. Audio, USB, boots on real hardware | planned |
