@@ -24,6 +24,7 @@
 #include <eris/module.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
+#include <eris/process.hpp>
 #include <eris/string.hpp>
 #include <eris/serial.hpp>
 #include <eris/thread.hpp>
@@ -175,6 +176,7 @@ void time_selftest()
 }
 
 constinit Atomic<u64> smp_hits{0};
+constinit Atomic<u32> smp_workers_done{0};
 
 // Every core hammers the same refcount and the same allocator, which is the
 // cheapest way to find out whether the locks added in this phase are real.
@@ -193,22 +195,38 @@ void smp_worker()
     }
 }
 
+void smp_worker_thread(void*)
+{
+    smp_worker();
+    smp_workers_done.fetch_add(1);
+}
+
 void smp_selftest()
 {
     const Module* vga = module_find("vga");
     const u32 before = vga != nullptr ? vga->users.value() : 0;
 
-    const bool answered = arch::smp_run_on_others(smp_worker, 5000000000ULL);
-    smp_worker();
+    // One worker per core, handed to the scheduler rather than to the idle
+    // loops, because a core running a thread is not watching for a job.
+    const usize workers = arch::cpu_online_count();
+    smp_workers_done.store(0);
 
+    for (usize i = 0; i < workers; ++i)
+        Thread::spawn("stress", smp_worker_thread, nullptr);
+
+    const u64 deadline = monotonic_ns() + 10000000000ULL;
+    while (smp_workers_done.load() < workers && monotonic_ns() < deadline)
+        yield();
+
+    const bool answered = smp_workers_done.load() >= workers;
     const u32 after = vga != nullptr ? vga->users.value() : 0;
 
     pr_info("smp selftest: %lu cores, %lu refcount round trips, vga users %u then %u%s\n",
-            static_cast<u64>(arch::cpu_online_count()),
+            static_cast<u64>(workers),
             smp_hits.load(),
             before,
             after,
-            answered ? "" : ", some core never answered");
+            answered ? "" : ", a worker never finished");
 
     if (before != after)
         pr_err("smp selftest: the refcount did not come back to where it started\n");
@@ -295,6 +313,7 @@ void thread_selftest()
 void report_modules();
 void load_initrd_modules();
 void mount_filesystems();
+void start_init();
 void module_selftest();
 void block_selftest();
 void fs_selftest();
@@ -318,6 +337,7 @@ void kernel_init(void*)
     load_initrd_modules();
     mount_filesystems();
     report_modules();
+    start_init();
 
     if (cmdline_has("smptest"))
         smp_selftest();
@@ -333,6 +353,13 @@ void kernel_init(void*)
 
     if (cmdline_has("fstest"))
         fs_selftest();
+
+    if (cmdline_has("crashtest")) {
+        int code = 0;
+        syscall_init();
+        process_run("/crash", code);
+        pr_info("crashtest: the kernel is still running after the program died\n");
+    }
 
     if (cmdline_has("test_exit")) {
         pr_info("selftests finished, leaving\n");
@@ -386,7 +413,11 @@ void load_initrd_modules()
         usize length = 0;
 
         const void* data = initrd_data_at(i, name, length);
-        if (data == nullptr || length == 0)
+        if (data == nullptr || length == 0 || name == nullptr)
+            continue;
+
+        // The archive carries programs as well, and those are not modules.
+        if (memcmp(name, "modules/", 8) != 0)
             continue;
 
         module_load_image(data, length, name);
@@ -618,6 +649,53 @@ void fs_selftest()
 
     constexpr const char* through_console = "fs selftest: this line went through /dev/console\n";
     fs::write_file("/dev/console", through_console, strlen(through_console));
+}
+
+// The initrd carries the first program next to the modules, so it is copied
+// into the root file system and started from there.
+void start_init()
+{
+    const char* path = cmdline_value("init");
+    if (path == nullptr)
+        path = "/init";
+
+    if (cmdline_has("noinit"))
+        return;
+
+    // The programs the initrd carries are copied into the root file system, so
+    // a path is a path no matter where the bytes came from.
+    for (usize i = 0; i < initrd_file_count(); ++i) {
+        const char* name = nullptr;
+        usize length = 0;
+
+        const void* image = initrd_data_at(i, name, length);
+        if (image == nullptr || name == nullptr || length == 0)
+            continue;
+
+        const char* base = name;
+        for (const char* p = name; *p != '\0'; ++p) {
+            if (*p == '/')
+                base = p + 1;
+        }
+
+        if (memcmp(name, "bin/", 4) != 0)
+            continue;
+
+        if (fs::Inode* file = fs::ramfs_create_file(base); file != nullptr)
+            file->write(0, image, length);
+    }
+
+    fs::Stat status{};
+    if (fs::stat(path, status) != 0) {
+        pr_info("init: %s is not there, staying in the kernel\n", path);
+        return;
+    }
+
+    syscall_init();
+
+    int code = 0;
+    if (process_run(path, code) != 0)
+        pr_err("init: %s did not run\n", path);
 }
 
 void report_memory()
