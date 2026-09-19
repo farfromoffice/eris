@@ -63,7 +63,7 @@ void dump_control_registers()
 void dump_instruction_bytes(u64 rip)
 {
     constexpr u64 image_start = 1 << 20;
-    constexpr u64 mapped_limit = 1ULL << 30;
+    constexpr u64 mapped_limit = 4ULL << 30;
 
     if (rip < image_start || rip + 16 >= mapped_limit)
         return;

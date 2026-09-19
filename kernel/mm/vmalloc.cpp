@@ -16,8 +16,8 @@ namespace {
 
 // Virtual space above the directly mapped gigabyte. Nothing lives here until
 // something asks for it, which is what makes an overrun land in a hole.
-constexpr virt_addr vmalloc_base = 1ULL << 30;
-constexpr virt_addr vmalloc_end = 2ULL << 30;
+constexpr virt_addr vmalloc_base = 4ULL << 30;
+constexpr virt_addr vmalloc_end = 8ULL << 30;
 constexpr usize max_ranges = 64;
 
 struct Range {
@@ -142,7 +142,7 @@ const char* region_name(virt_addr address)
     if (address >= reinterpret_cast<virt_addr>(__kernel_start)
         && address < reinterpret_cast<virt_addr>(__kernel_end))
         return "the kernel image";
-    if (address < (1ULL << 30))
+    if (address < (4ULL << 30))
         return "the direct map";
     if (address >= vmalloc_base && address < vmalloc_end)
         return "the vmalloc area";

@@ -37,7 +37,9 @@ constexpr u64 pte_address_mask = 0x000FFFFFFFFFF000ULL;
 constexpr usize huge_page_size = 2 * 1024 * 1024;
 constexpr usize entries_per_table = 512;
 
-constexpr phys_addr direct_limit = 1ULL << 30;
+// Four gigabytes, because the firmware puts its tables just under the top of
+// low memory and a machine with two gigabytes of RAM puts them past one.
+constexpr phys_addr direct_limit = 4ULL << 30;
 
 constinit AddressSpace kernel_space{};
 
@@ -292,18 +294,25 @@ void paging_init()
     // the allocator hands out is touched through this window. It is writable
     // but never executable, the kernel image below gets the real permissions.
     u64* pdpt = allocate_table();
-    u64* directory = allocate_table();
-    if (pdpt == nullptr || directory == nullptr)
+    if (pdpt == nullptr)
         panic("paging: no memory for the direct map");
 
     pml4[0] = virt_to_phys(reinterpret_cast<virt_addr>(pdpt)) | pte_present | pte_write;
-    pdpt[0] = virt_to_phys(reinterpret_cast<virt_addr>(directory)) | pte_present | pte_write;
 
-    for (usize i = 0; i < entries_per_table; ++i) {
-        const phys_addr frame = static_cast<phys_addr>(i) * huge_page_size;
-        if (frame >= direct_limit)
-            break;
-        directory[i] = frame | pte_present | pte_write | pte_huge | pte_no_execute;
+    for (usize gigabyte = 0; gigabyte * (1ULL << 30) < direct_limit; ++gigabyte) {
+        u64* directory = allocate_table();
+        if (directory == nullptr)
+            panic("paging: no memory for the direct map");
+
+        pdpt[gigabyte] = virt_to_phys(reinterpret_cast<virt_addr>(directory))
+            | pte_present | pte_write;
+
+        for (usize i = 0; i < entries_per_table; ++i) {
+            const phys_addr frame = gigabyte * (1ULL << 30)
+                + static_cast<phys_addr>(i) * huge_page_size;
+
+            directory[i] = frame | pte_present | pte_write | pte_huge | pte_no_execute;
+        }
     }
 
     const auto text_start = reinterpret_cast<virt_addr>(__text_start);
