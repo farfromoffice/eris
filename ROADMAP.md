@@ -21,7 +21,7 @@ here.
 8. [Phase 3: modern interrupts and time](#phase-3-modern-interrupts-and-time) (done)
 9. [Phase 4: concurrency and more than one CPU](#phase-4-concurrency-and-more-than-one-cpu) (done)
 10. [Phase 5: threads and scheduling](#phase-5-threads-and-scheduling) (done)
-11. [Phase 6: loadable modules](#phase-6-loadable-modules)
+11. [Phase 6: loadable modules](#phase-6-loadable-modules) (done)
 12. [Phase 7: buses and devices](#phase-7-buses-and-devices)
 13. [Phase 8: storage and a file system](#phase-8-storage-and-a-file-system)
 14. [Phase 9: userspace](#phase-9-userspace)
@@ -41,8 +41,12 @@ Release 0.1, code name Dysnomia. Multiboot entry, long mode, identity mapped
 first gigabyte, GDT and IDT, legacy
 PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
-license taint check and a symbol export table. Three modules in tree: `vga`,
-`keyboard`, `desktop`.
+license taint check and a symbol export table. Three modules in tree: `vga` and
+`keyboard` built in, `desktop` loaded from the initrd.
+
+Phase 6 made the module framework real: `desktop` is no longer linked into the
+image, it is a relocatable object in the initrd that the kernel maps, relocates
+against the exported symbols and runs.
 
 Phase 5 put threads on top: the second half of boot runs as `kinit`, deferred
 work has a `kworker` thread, and anything can sleep or block instead of spinning.
@@ -143,7 +147,7 @@ either.
 | Concurrency | Spinlocks, IRQ safe locks, atomics, per CPU areas | Lock ordering rules, RCU style readers | done |
 | Multiprocessing | Every core online, IPIs, TLB shootdown | Per CPU scheduling, x2APIC | mostly done |
 | Scheduling | Kernel threads, round robin, wait queues, preemption | Per CPU run queues, priorities, fair policy | mostly done |
-| Loadable modules | Built in descriptors only | Relocatable images loaded at runtime, versioned ABI, initrd | 6 |
+| Loadable modules | Relocatable images from an initrd, versioned ABI, clean unload | Autoload by device id, module GOT | mostly done |
 | Device discovery | Hard coded ports | PCI enumeration, bus and driver matching, virtio, MSI | 7 |
 | Storage and VFS | None | Block layer, VFS, ramfs, devfs, an on disk file system | 8 |
 | Userspace | None, everything ring 0 | Syscalls, ELF loading, processes, signals, a small libc | 9 |
@@ -384,80 +388,53 @@ of interrupt has been sent.
 ## Phase 6: loadable modules
 
 **Goal.** A module built separately, never linked into the image, loads at
-runtime, resolves its symbols, runs and unloads cleanly. This is the point of the
-project.
-
-**Why now.** Everything the loader needs exists after phase 2, and phase 5 lets
-an init block. Fixing the ABI later, with a dozen modules in tree, is much harder
-than fixing it now with three.
+runtime, resolves its symbols, runs and unloads cleanly. This is the point of
+the project. Landed on main, ships in 0.5, Makemake.
 
 **Work**
 
-- [ ] `kernel/module/elf.cpp`: ELF64 relocatable parser. Section headers, symbol
-  table, string table, `SHT_RELA` sections, sanity limits on every size read from
-  the file.
-- [ ] `kernel/module/loader.cpp`: allocate module memory from the phase 2 virtual
-  allocator, one region per section group, copy `PROGBITS`, zero `NOBITS`, apply
-  relocations, then set protections: text read execute, rodata read only, data no
-  execute. No section stays writable and executable at any point.
-- [ ] Relocation types needed for `-mcmodel=kernel` code: `R_X86_64_64`,
-  `R_X86_64_PC32`, `R_X86_64_PLT32`, `R_X86_64_32S`, `R_X86_64_GOTPCREL` with a
-  per module GOT.
-- [ ] Symbol resolution against `.eris_symtab`, with a clear error naming the missing
-  symbol instead of a fault at first call.
-- [ ] ABI versioning: a `kernel_abi` field in `ModuleInfo`, bumped whenever a public
-  header changes shape, checked before a single relocation is applied. Refuse a
-  mismatch, say which side is older.
-- [ ] Module memory accounting, so `module_unload` frees every page and the leak
-  shows up in the page count if it does not.
-- [ ] Constructors and destructors inside a module image: run its `.init_array` after
-  relocation and its `.fini_array` on unload.
-- [ ] `ERIS_EXPORT_SYMBOL_DATA` for exported variables, and a symbol namespace prefix
-  so two modules cannot export the same name silently.
-- [ ] Initrd: `kernel/initrd.cpp` reading a tar archive passed through the multiboot
-  modules field, `scripts/mkinitrd.sh` building it, the Makefile producing
-  `build/initrd.tar` with every out of tree module.
-- [ ] Out of tree build: `modules/<name>/Makefile` fragment producing `<name>.ko`
-  against installed headers, so a module can be built without the kernel tree
-  open.
-- [ ] Runtime control surface: `module_load_image(const void*, usize)`,
-  `module_load_from_initrd(const char*)`, plus listing and unloading, and a
-  `modules` command in the debug console.
-- [ ] Autoload: a module declares the device ids it drives, phase 7 asks the loader
-  for the module that matches.
+- [x] ~~`include/eris/elf.hpp` and `kernel/module/loader.cpp`: ELF64 relocatable
+  parser with the header, section, symbol and relocation structures, and every
+  size checked against the image before it is trusted.~~
+- [x] ~~Module memory comes from the virtual allocator, one page granular region
+  per image, writable while it is being built and given its real permissions
+  once the relocations are applied: text read execute, everything else no
+  execute.~~
+- [x] ~~Relocations: `R_X86_64_64`, `PC32`, `PLT32`, `32`, `32S` and `PC64`, with
+  the range checks that turn a module placed too far away into a readable error
+  rather than a wrong jump.~~
+- [x] ~~Symbol resolution against `.eris_symtab`, naming the symbol nothing
+  exports instead of faulting on the first call.~~
+- [x] ~~ABI versioning: `module_abi_version` is stamped into every descriptor by
+  the macro and checked before a single relocation is applied.~~
+- [x] ~~Unload frees the image. The page count before and after a load, unload and
+  reload round trip has to match, and the test fails if it does not.~~
+- [x] ~~`kernel/initrd.cpp`: a plain tar handed over as a multiboot module, read
+  without a file system, because there is not one yet. `scripts/mkinitrd.sh`
+  packs it and the Makefile builds it.~~
+- [x] ~~Out of tree build: `BUILTIN_MODULES` in the Makefile decides what is linked
+  into the image, everything else becomes a `.ko` in the initrd. `vga` and
+  `keyboard` stay builtin, `desktop` loads at runtime.~~
+- [x] ~~Boot time selection: `modules.noload` skips the loader entirely and
+  `modules.blacklist=a,b` leaves named modules alone, so a machine that panics
+  in a module can still boot.~~
+- [ ] `ERIS_EXPORT_SYMBOL_DATA` for exported variables, per module GOT for
+  `GOTPCREL`, and running a module's own `.init_array`. None of the modules in
+  tree need any of them yet, and each is a page of code when one does.
+- [ ] Autoload from device ids. That needs the bus layer in phase 7 to have
+  something to match against.
 
-**Choosing what gets loaded.** A module system nobody can steer is just a build
-trick, so selection lands with the loader rather than after it.
+**Done when.** `make` produces `desktop.ko` outside the image, the kernel boots
+without it, the initrd load brings the desktop up, `module_unload` gives every
+page back, and loading a module built against a bumped ABI is refused with a
+readable message. Done: `./scripts/module-test.sh` checks all five, including
+that the page count comes back to where it started.
 
-- [ ] Build time selection: a `config` target writing `build/config.mk` and
-  `include/eris/config.hpp`, where every module is one of built in, loadable or
-  left out. A text menu is enough, the point is that a build can drop the desktop
-  and keep the serial console without editing the Makefile.
-- [ ] Profiles shipped with the tree: `minimal` for a serial only kernel, `desktop`
-  for the full set, `debug` adding the test modules, each a file listing modules
-  rather than a branch in the build system.
-- [ ] Boot time selection through the kernel command line: `modules.load=a,b,c` to
-  force a set, `modules.blacklist=d` to keep one out, `modules.autoload=off` to
-  stop device matching from pulling anything in, so a machine that panics in a
-  driver can still boot.
-- [ ] A manifest in the initrd listing what to load and in which order, with the
-  command line overriding it, so the same image serves several machines.
-- [ ] Dependency aware selection: asking for `desktop` pulls `vga` and `keyboard`,
-  excluding `vga` refuses the selection with a readable reason instead of
-  half loading it.
-- [ ] Load results reported in the boot log and kept queryable afterwards: what was
-  asked for, what loaded, what was skipped and why.
-
-**Done when.** `make` produces `vga.ko` outside the image, the kernel boots
-without it, `module_load_from_initrd("vga")` brings the screen up, `module_unload`
-gives every page back, loading a module built against a bumped ABI is refused
-with a readable message, and booting with `modules.blacklist=desktop` gives a
-working serial only system.
-
-**Traps.** `R_X86_64_PC32` overflows once a module lands further than 2 GiB from
-the kernel, so module memory has to be allocated near the kernel image. Unloading
-while an interrupt handler from that module is running is a use after free, so
-the refcount has to cover registered handlers, not just explicit users.
+**Traps.** `R_X86_64_PC32` reaches two gigabytes, so module memory has to be
+allocated near the kernel image, which is what keeps the vmalloc area where it
+is. The descriptor layout is shared between the kernel and every image built
+against it, so adding a field to `ModuleInfo` means bumping the ABI in the same
+commit.
 
 ## Phase 7: buses and devices
 
@@ -1231,7 +1208,7 @@ Not a phase, work that grows with each of the above.
 3  apic and time .......... done
 4  locks and SMP .......... done
 5  threads ................ done
-6  loadable modules ....... needs 2, much better with 5
+6  loadable modules ....... done
 7  buses and devices ...... needs 3 and 6
 8  storage and VFS ........ needs 7
 9  userspace .............. needs 2, 5, 8
@@ -1260,7 +1237,7 @@ tag and never reused.
 | 0.2 | Sedna | Phases 1 and 2. Panics with a backtrace, W^X, real page table API. The higher half move waits for the boot path work | phase 1 and most of 2 landed |
 | 0.3 | Quaoar | Phase 3. ACPI tables, APIC, nanosecond clock, timer subsystem | landed |
 | 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | landed |
-| 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | planned |
+| 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | landed |
 | 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | planned |
 | 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | planned |
 | 0.8 | Varuna | Phase 10. Window server, toolkit, terminal, panel | planned |

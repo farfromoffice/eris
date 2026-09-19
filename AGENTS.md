@@ -119,7 +119,9 @@ ERIS_MODULE("name", "0.1", "author", "GPL-2.0-only", name_init, name_exit, "vga"
    everything init did, including unsubscribing from other modules.
 6. Dependencies are module names. The framework loads them first and refcounts
    them, so a module in use cannot be unloaded.
-7. The Makefile picks up `modules/*/*.cpp` automatically, no edit needed.
+7. The Makefile picks up `modules/*/*.cpp` automatically. A module named in
+   `BUILTIN_MODULES` is linked into the image, everything else is built as a
+   `.ko` and packed into the initrd, which is the path worth testing.
 8. Update `CLAUDE.md`.
 
 ## Interrupt rules

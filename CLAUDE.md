@@ -73,12 +73,12 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 5. `mm::paging_init`, which builds the kernel page tables, applies W^X and turns
    the stack guards into holes
 6. `mm::heap_init`, which reserves virtual space and commits the first 2 MiB
-7. `acpi::init`, `arch::irq_init` and `clock_init`, in that order, because the
-   controller and the clock both come out of the tables
+7. `initrd_init`, then `acpi::init`, `arch::irq_init` and `clock_init`, in that
+   order, because the controller and the clock both come out of the tables
 8. `timers_init`, `arch::sti`, `arch::smp_init`, then `sched_init`
 9. `work_start` and the `kinit` thread, which carries the rest of the boot
-   sequence: `module_init_builtin`, `report_modules` and whichever self tests
-   the command line asked for
+   sequence: `module_init_builtin`, the initrd load, `report_modules` and
+   whichever self tests the command line asked for
 10. the boot CPU falls into its idle loop, and every other core is already in
     one of its own
 
@@ -101,7 +101,9 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/panic.hpp` | `panic`, never returns |
 | `eris/mm.hpp` | page allocator, `heap_init`, `kmalloc` `kzalloc` `kfree` |
 | `eris/paging.hpp` | `AddressSpace`, `PageFlags`, `vmalloc_reserve`, `map_device`, `region_name`, `phys_to_virt` |
-| `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state |
+| `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state, `module_load_image` |
+| `eris/elf.hpp` | ELF64 relocatable structures the loader reads |
+| `eris/initrd.hpp` | Tar archive lookup for the modules the boot loader passed in |
 | `eris/export.hpp` | `ERIS_EXPORT_SYMBOL`, `symbol_lookup` |
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
@@ -123,6 +125,10 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `vga` | 0.1 | none | `vga_clear` `vga_put_cell` `vga_write` `vga_fill_row` `vga_set_color` `vga_console_enable` `vga_width` `vga_height` |
 | `keyboard` | 0.1 | none | `keyboard_subscribe` `keyboard_unsubscribe` |
 | `desktop` | 0.1 | `vga`, `keyboard` | none, it is a leaf |
+
+`vga` and `keyboard` are linked into the image, `desktop` is built as
+`build/modules/desktop.ko`, packed into `build/initrd.tar` and loaded at boot.
+`BUILTIN_MODULES` in the Makefile decides which is which.
 
 Exported symbols right now: 8, six from `vga` and two from `keyboard`.
 `vga_width` and `vga_height` are callable but not exported yet.
@@ -216,6 +222,16 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 
 ## Traps worth remembering
 
+* `ModuleInfo` is shared between the kernel and every image built against it.
+  Adding or moving a field means bumping `module_abi_version` in the same
+  commit, otherwise an older image is accepted and then misread.
+* A loadable module is the relocatable object itself. `BUILTIN_MODULES` in the
+  Makefile decides what is linked into the image, everything else lands in
+  `build/initrd.tar` as a `.ko`.
+* `R_X86_64_PC32` reaches two gigabytes, which is why module images come from
+  the vmalloc area rather than anywhere else.
+* A module ABI is `extern "C"` on purpose. A mangled name is not something the
+  export table can promise to keep.
 * Adding a header dependency to `include/eris/module.hpp` rebuilds every module,
   which is how a stale object file once produced a duplicate descriptor symbol.
   `make clean` when the macro changes.
@@ -265,6 +281,7 @@ qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M 
 qemu-system-x86_64 -kernel build/eris32.elf -serial stdio -display none -m 512M -append timetest
 CPUS=8 ./scripts/smp-test.sh
 CPUS=4 ./scripts/thread-test.sh
+./scripts/module-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning

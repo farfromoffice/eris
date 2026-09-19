@@ -52,8 +52,12 @@ MODULE FRAMEWORK
 M:	farfromoffice
 S:	Supported
 F:	kernel/module/
+F:	kernel/initrd.cpp
 F:	include/eris/module.hpp
 F:	include/eris/export.hpp
+F:	include/eris/elf.hpp
+F:	include/eris/initrd.hpp
+T:	./scripts/module-test.sh
 P:	Descriptor layout and section markers are ABI for every module in the
 	tree. A change here updates CLAUDE.md as well.
 T:	./scripts/check-modules.sh
