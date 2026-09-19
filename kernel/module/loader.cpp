@@ -39,14 +39,16 @@ const char* string_at(const u8* image, const elf::SectionHeader& strings, u32 of
     return reinterpret_cast<const char*>(image + strings.offset + offset);
 }
 
-// A module image has to sit within two gigabytes of the kernel, because the
-// relocations a compiler emits for kernel code are 32 bit and relative. The
-// direct map is where that is true, so an image is a contiguous run of frames
-// seen through it rather than a fresh window in the vmalloc area.
+// The relocations a compiler emits for kernel code are 32 bit: PC32 reaches
+// two gigabytes and 32S needs the address itself to fit in a signed 32 bit
+// word. An image above this line cannot satisfy either. It's refused here
+// rather than mapped, relocated and then rejected one entry at a time.
+constexpr phys_addr image_limit = 2ULL << 30;
+
 bool allocate_image(LoadedImage& loaded, usize bytes)
 {
     const usize pages = round_up_pages(bytes);
-    const phys_addr frames = mm::alloc_pages(pages);
+    const phys_addr frames = mm::alloc_pages_below(pages, image_limit);
     if (frames == 0)
         return false;
 
@@ -306,7 +308,8 @@ int module_load_image(const void* data, usize length, const char* origin)
     }
 
     if (!allocate_image(loaded, total)) {
-        pr_err("module loader: no memory for %s\n", origin);
+        pr_err("module loader: no memory below %lu MiB for %s\n",
+               static_cast<u64>(image_limit / (1024 * 1024)), origin);
         return -1;
     }
 

@@ -133,13 +133,20 @@ phys_addr alloc_page()
 
 phys_addr alloc_pages(usize count)
 {
+    return alloc_pages_below(count, managed_limit);
+}
+
+phys_addr alloc_pages_below(usize count, phys_addr limit)
+{
     if (count == 0)
         return 0;
+
+    const usize ceiling = limit / page_size < managed_pages ? limit / page_size : managed_pages;
 
     IrqGuard guard(allocator_lock);
 
     usize run = 0;
-    for (usize i = 0; i < managed_pages; ++i) {
+    for (usize i = 0; i < ceiling; ++i) {
         if (test_bit(i)) {
             run = 0;
             continue;

@@ -11,6 +11,7 @@ void page_alloc_init(u32 multiboot_magic, u64 multiboot_info);
 
 phys_addr alloc_page();
 phys_addr alloc_pages(usize count);
+phys_addr alloc_pages_below(usize count, phys_addr limit);
 void free_page(phys_addr page);
 void free_pages(phys_addr page, usize count);
 

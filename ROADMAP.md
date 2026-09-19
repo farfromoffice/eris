@@ -442,9 +442,9 @@ page back, and loading a module built against a bumped ABI is refused with a
 readable message. Done: `./scripts/module-test.sh` checks all five, including
 that the page count comes back to where it started.
 
-**Traps.** `R_X86_64_PC32` reaches two gigabytes, so module memory has to be
-allocated near the kernel image, which is what keeps the vmalloc area where it
-is. The descriptor layout is shared between the kernel and every image built
+**Traps.** `R_X86_64_PC32` reaches two gigabytes and `R_X86_64_32S` needs the
+address to fit in a signed 32 bit word, so module memory is taken from below
+two gigabytes and refused above it. The descriptor layout is shared between the kernel and every image built
 against it, so adding a field to `ModuleInfo` means bumping the ABI in the same
 commit.
 

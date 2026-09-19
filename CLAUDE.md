@@ -103,7 +103,7 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/console.hpp` | `Console` interface, register and unregister, `console_write` |
 | `eris/printk.hpp` | `pr_debug` `pr_info` `pr_warn` `pr_err`, `vprintk` |
 | `eris/panic.hpp` | `panic`, never returns |
-| `eris/mm.hpp` | page allocator, `heap_init`, `kmalloc` `kzalloc` `kfree` |
+| `eris/mm.hpp` | page allocator, `alloc_pages_below`, `heap_init`, `kmalloc` `kzalloc` `kfree` |
 | `eris/paging.hpp` | `AddressSpace`, `PageFlags`, `vmalloc_reserve`, `map_device`, `region_name`, `phys_to_virt` |
 | `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, `module_get_owner`, `module_snapshot`, taint state, `module_load_image` |
 | `eris/elf.hpp` | ELF64 relocatable structures the loader reads |
@@ -271,9 +271,12 @@ console app shows the same stream inside a window.
   `noexcept`. A `new` expression returns `nullptr` when the heap is exhausted,
   and using it before `heap_init` is a null dereference.
 * Fixed limits: 64 modules, 4 consoles, 8 keyboard subscribers, 16 IRQ lines.
-* A module image is allocated from the direct map rather than the vmalloc area.
-  The relocations a compiler emits for kernel code are 32 bit and relative, so
-  an image further than two gigabytes from the kernel cannot reach it.
+* A module image is allocated from the direct map rather than the vmalloc
+  area, and from below two gigabytes through `alloc_pages_below`. The
+  relocations a compiler emits for kernel code are 32 bit: `R_X86_64_PC32`
+  reaches two gigabytes and `R_X86_64_32S` needs the address itself to fit in
+  a signed 32 bit word, an image above that line satisfies neither. It's
+  refused where the memory is taken rather than one relocation at a time.
 * Loadable images are relocated against the symbols already exported, so an
   image that calls into another module has to arrive after it. `kernel/main.cpp`
   repeats the pass while it still maps something, which is why the order inside
@@ -320,8 +323,6 @@ console app shows the same stream inside a window.
 * A loadable module is the relocatable object itself. `BUILTIN_MODULES` in the
   Makefile decides what is linked into the image, everything else lands in
   `build/initrd.tar` as a `.ko`.
-* `R_X86_64_PC32` reaches two gigabytes, which is why module images come from
-  the vmalloc area rather than anywhere else.
 * User space starts at `0x8000000000`, above everything the kernel maps, and a
   process address space is the kernel one plus a branch of its own. A user
   mapping needs the user bit on every level of the walk.
