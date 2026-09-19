@@ -124,6 +124,14 @@ ERIS_MODULE("name", "0.1", "author", "GPL-2.0-only", name_init, name_exit, "vga"
    `.ko` and packed into the initrd, which is the path worth testing.
 8. Update `CLAUDE.md`.
 
+## Userspace rules
+
+A program is a static ELF64 linked above `0x8000000000` and built with
+`user/lib/eris.h`, which is the whole of what a program gets: the syscalls the
+kernel answers and enough string handling to print. Anything a program hands the
+kernel is a claim until `Process::owns` says otherwise, and a syscall gives back
+every register except `rax`, `rcx` and `r11`.
+
 ## Interrupt rules
 
 `eris::arch::Registers` in `include/eris/irq.hpp` mirrors the push order in

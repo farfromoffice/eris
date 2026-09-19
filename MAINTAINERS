@@ -114,6 +114,17 @@ F:	include/eris/module_api.hpp
 P:	Everything here is C linkage and covered by the module ABI version.
 	Changing a signature means bumping it.
 
+USERSPACE AND SYSCALLS
+M:	farfromoffice
+S:	Maintained
+F:	kernel/proc/
+F:	include/eris/process.hpp
+F:	user/
+P:	Every pointer a program hands over is a claim until the address space
+	says otherwise. A syscall returns every register but rax, rcx and r11
+	the way it found them.
+T:	./scripts/user-test.sh
+
 BLOCK LAYER
 M:	farfromoffice
 S:	Maintained

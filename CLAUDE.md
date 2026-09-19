@@ -79,8 +79,8 @@ pages, enters long mode, runs `call_global_ctors`, then calls `kernel_main`.
 8. `timers_init`, `arch::sti`, `arch::smp_init`, then `sched_init`
 9. `work_start` and the `kinit` thread, which carries the rest of the boot
    sequence: `module_init_builtin`, `pci::init`, the initrd load,
-   the mounts, `report_modules` and whichever self tests the command line
-   asked for
+   the mounts, `report_modules`, the first program if there is one, and
+   whichever self tests the command line asked for
 10. the boot CPU falls into its idle loop, and every other core is already in
     one of its own
 
@@ -114,6 +114,7 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/ramfs.hpp` | Files in the heap |
 | `eris/devfs.hpp` | Devices as files |
 | `eris/ext2.hpp` | Mounting an ext2 image read only |
+| `eris/process.hpp` | `Process`, `process_run`, `syscall_init`, the user base |
 | `eris/export.hpp` | `ERIS_EXPORT_SYMBOL`, `symbol_lookup` |
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
@@ -242,6 +243,16 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   `build/initrd.tar` as a `.ko`.
 * `R_X86_64_PC32` reaches two gigabytes, which is why module images come from
   the vmalloc area rather than anywhere else.
+* User space starts at `0x8000000000`, above everything the kernel maps, and a
+  process address space is the kernel one plus a branch of its own. A user
+  mapping needs the user bit on every level of the walk.
+* A syscall preserves every register except `rax`, `rcx` and `r11`. The entry
+  stub pops the frame back rather than discarding it, because the other side
+  compiled on that promise.
+* A thread running a program carries its own syscall stack, and the scheduler
+  hands the CPU that one rather than the thread's own top while it is in use.
+* Ring 3 is not preemptible yet: the scheduler is held off while a program runs,
+  because there is nowhere to save a user context.
 * Mounts are set up after the modules load, because storage arrives as a
   module. The root is ramfs, `/dev` is devfs, and `/mnt` is whatever ext2 image
   the first block device carries.
@@ -308,6 +319,7 @@ CPUS=4 ./scripts/thread-test.sh
 ./scripts/module-test.sh
 ./scripts/device-test.sh
 ./scripts/fs-test.sh
+./scripts/user-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning

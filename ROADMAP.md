@@ -24,7 +24,7 @@ here.
 11. [Phase 6: loadable modules](#phase-6-loadable-modules) (done)
 12. [Phase 7: buses and devices](#phase-7-buses-and-devices) (mostly done)
 13. [Phase 8: storage and a file system](#phase-8-storage-and-a-file-system) (mostly done)
-14. [Phase 9: userspace](#phase-9-userspace)
+14. [Phase 9: userspace](#phase-9-userspace) (mostly done)
 15. [Phase 10: graphics and the desktop](#phase-10-graphics-and-the-desktop)
 16. [Phase 11: audio](#phase-11-audio)
 17. [Phase 12: USB and real hardware](#phase-12-usb-and-real-hardware)
@@ -43,6 +43,9 @@ PIC, PIT at 100 Hz, bitmap page allocator, first fit heap, serial and VGA
 consoles, and a module framework with dependency resolution, refcounting, a
 license taint check and a symbol export table. Three modules in tree: `vga` and
 `keyboard` built in, `desktop` loaded from the initrd.
+
+Phase 9 opened ring 3: the kernel loads a static executable above everything it
+maps, answers its syscalls, and kills it alone when it faults.
 
 Phase 8 put files on top: ramfs at the root, devfs at `/dev`, and a read only
 ext2 on the virtio disk, all reachable through one path walker.
@@ -159,7 +162,7 @@ either.
 | Loadable modules | Relocatable images from an initrd, versioned ABI, clean unload | Autoload by device id, module GOT | mostly done |
 | Device discovery | PCI enumeration, driver matching, virtio-blk, rtc | MSI, MMCONFIG, AHCI, framebuffer | mostly done |
 | Storage and VFS | Block layer, VFS, ramfs, devfs, ext2 read only | Buffer cache, request queues, writing to disk | mostly done |
-| Userspace | None, everything ring 0 | Syscalls, ELF loading, processes, signals, a small libc | 9 |
+| Userspace | Ring 3, syscalls, ELF loading, one process at a time | Preemptible user code, fork, signals, a shell | mostly done |
 | Graphics | Kernel side VGA text desktop | Framebuffer device, userspace window server, toolkit, apps | 10 |
 | Audio | None | Mixer, stream API, an HDA or virtio-sound driver | 11 |
 | USB | None | Host controller, hub, HID, mass storage | 12 |
@@ -535,49 +538,45 @@ getting that wrong reads an inode table full of zeroes rather than failing.
 ## Phase 9: userspace
 
 **Goal.** Programs run in ring 3, and a fault in one kills the program rather
-than the machine.
-
-**Why now.** This is the line between a kernel and an operating system, and the
-desktop phase depends entirely on it.
+than the machine. Landed on main, part of the 0.7 Gonggong milestone.
 
 **Work**
 
-- [ ] `kernel/proc/process.cpp`: a process owning an `AddressSpace`, a file
-  descriptor table, a working directory, a thread list, an exit code and a parent
-  link.
-- [ ] Ring 3 entry: TSS `rsp0` per CPU, `syscall` and `sysret` with `MSR_STAR`,
-  `MSR_LSTAR` and `MSR_SFMASK`, a syscall entry stub that switches stacks and
-  saves the user frame.
-- [ ] `kernel/proc/syscall.cpp`: a syscall table with an argument count and a
-  validating wrapper per entry. Start with exit, write, read, open, close, seek,
-  stat, mmap, munmap, spawn, wait, getpid, sleep, ioctl.
-- [ ] `kernel/proc/uaccess.cpp`: `copy_from_user` and `copy_to_user` validating every
-  range against the process address space, with fault fixups rather than a
-  pre check that races.
-- [ ] `kernel/proc/elf.cpp`: static ELF64 executable loading, segment mapping with
-  correct protections, a fresh stack carrying argv, envp and an auxiliary vector.
-- [ ] Process lifecycle: spawn, wait, exit, orphan reparenting, resource teardown on
-  exit including mappings and open files.
-- [ ] Signals, or a simpler event delivery mechanism, enough for a terminal to
-  interrupt a program.
-- [ ] IPC: at minimum pipes, plus a message port with handles, since the desktop in
-  phase 10 needs a real channel and retrofitting one is painful.
-- [ ] `user/libc/`: a small static libc, `crt0`, `malloc` over `mmap`, `stdio`
-  through file descriptors, `string.h`, and the syscall stubs.
-- [ ] `user/init/`, `user/sh/`, `user/coreutils/`: init that mounts and starts the
-  shell, a shell with pipes and redirection, and the dozen utilities that make
-  the system inspectable.
-- [ ] `modules/tty/`: line discipline, canonical mode, echo, control characters, the
-  thing that turns a serial port into a terminal.
+- [x] ~~`kernel/proc/process.cpp`: a process owning an address space of its own.
+  It is the kernel space plus a branch under a top level entry nothing else
+  uses, so a syscall reaches kernel memory without switching tables.~~
+- [x] ~~Ring 3 entry: user code and data descriptors in the per CPU GDT laid out
+  the way `sysret` expects, `STAR`, `LSTAR` and `SFMASK` programmed, and an
+  entry stub that swaps `gs`, switches to the kernel stack and hands the
+  dispatcher a frame with the call number first.~~
+- [x] ~~Syscalls: exit, write, read, open, close, getpid, sleep and a monotonic
+  clock. Every pointer a program hands over is checked against what its address
+  space actually maps before the kernel touches it.~~
+- [x] ~~`kernel/proc/process.cpp` loads a static ELF64 executable: segments mapped
+  with the permissions the headers ask for, read only segments losing write once
+  they carry the image, and a stack mapped no execute.~~
+- [x] ~~A fault in ring 3 kills the process and returns to the kernel that started
+  it, with the exception named and the faulting address reported.~~
+- [x] ~~`user/lib/`: the syscall wrappers, a `crt0` that reaches `main` and turns
+  its return value into an exit, and enough string handling to print a number.
+  `user/init/` and `user/crash/` are built into the initrd next to the
+  modules.~~
+- [ ] Processes that outlive the call that started them, fork or spawn, signals,
+  pipes, a real libc and a shell. Each needs a saved user context so a timer
+  tick can preempt ring 3, which is the piece to build next.
 
-**Done when.** The kernel starts `/bin/init` from ext2, init starts a shell on
-the serial console, `ls | grep something` works, a program that dereferences null
-dies alone with a message, and the shell survives it.
+**Done when.** The kernel starts a program from the file system, it prints
+through a syscall, and a fault in it kills the process instead of the kernel.
+Done: `./scripts/user-test.sh` runs init through all of its calls, reads a file
+off the ext2 disk from ring 3, collects the exit code, then runs a program that
+writes where nothing is mapped and checks the kernel carries on.
 
-**Traps.** Every pointer that crosses the boundary is a security bug until it is
-validated. `sysret` has sharp edges around non canonical addresses, which is one
-of the classic privilege escalation paths, so follow the checks the manual asks
-for exactly.
+**Traps.** A user mapping needs the user bit on every level of the walk, not
+just the last entry, or the fetch faults with the page present. Registers other
+than rax, rcx and r11 have to come back from a syscall untouched, otherwise the
+compiler on the other side keeps values that are no longer there. The scheduler
+must not hand a CPU a kernel stack that a thread in ring 3 is already borrowing,
+so a thread carries its own syscall stack while it runs a program.
 
 ## Phase 10: graphics and the desktop
 
@@ -1196,7 +1195,7 @@ Not a phase, work that grows with each of the above.
 6  loadable modules ....... done
 7  buses and devices ...... done enough for 8
 8  storage and VFS ........ done enough for 9
-9  userspace .............. needs 2, 5, 8
+9  userspace .............. first programs run
 10 graphics and desktop ... needs 7, 9
 11 audio .................. needs 7, 9
 12 USB and real hardware .. needs 7
@@ -1229,7 +1228,7 @@ the work is in, not whether a release went out.
 | 0.4 | Orcus | Phases 4 and 5. Locks, SMP, threads, scheduler, wait queues | work on main, unreleased |
 | 0.5 | Makemake | Phase 6. Out of tree modules loaded from an initrd, versioned ABI | work on main, unreleased |
 | 0.6 | Haumea | Phases 7 and 8. PCI, virtio, block layer, VFS, ext2, devfs | work on main, unreleased |
-| 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | planned |
+| 0.7 | Gonggong | Phase 9. Ring 3, syscalls, libc, init and a shell | work on main, unreleased |
 | 0.8 | Varuna | Phase 10. Window server, toolkit, terminal, panel | planned |
 | 0.9 | Ixion | Phases 11 and 12. Audio, USB, boots on real hardware | planned |
 | 1.0 | Charon | Phases 13 and 14. Power management, hardening, self hosting, the installer | planned |
