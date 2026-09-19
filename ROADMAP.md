@@ -561,17 +561,29 @@ than the machine. Landed on main, part of the 0.7 Gonggong milestone.
   its return value into an exit, and enough string handling to print a number.
   `user/init/` and `user/crash/` are built into the initrd next to the
   modules.~~
+- [x] ~~Preemptible ring 3. A tick that lands in user mode pushes its frame onto
+  the thread's own syscall stack, so a switch saves it like any other kernel
+  context. The stack, the address space and the call gate all follow the thread
+  to whichever core picks it up next.~~
 - [ ] Processes that outlive the call that started them, fork or spawn, signals,
-  pipes, a real libc and a shell. Each needs a saved user context so a timer
-  tick can preempt ring 3, which is the piece to build next.
+  pipes, a real libc and a shell. The machinery under them is in, what is
+  missing is the process lifetime: today one program runs to completion inside
+  the call that started it.
 
 **Done when.** The kernel starts a program from the file system, it prints
 through a syscall, and a fault in it kills the process instead of the kernel.
 Done: `./scripts/user-test.sh` runs init through all of its calls, reads a file
-off the ext2 disk from ring 3, collects the exit code, then runs a program that
-writes where nothing is mapped and checks the kernel carries on.
+off the ext2 disk from ring 3, collects the exit code, runs a program that
+counts through dozens of timer ticks and still adds up, then one that writes
+where nothing is mapped, and checks the kernel carries on. It passes on one,
+two, four and eight cores.
 
-**Traps.** A user mapping needs the user bit on every level of the walk, not
+**Traps.** Everything a thread in ring 3 depends on is per CPU until it is made
+to follow the thread: the syscall stack, the page tables and the `syscall` MSRs
+themselves. A program that migrates to a core where any of the three was never
+set up dies in a way that looks nothing like the cause.
+
+A user mapping needs the user bit on every level of the walk, not
 just the last entry, or the fetch faults with the page present. Registers other
 than rax, rcx and r11 have to come back from a syscall untouched, otherwise the
 compiler on the other side keeps values that are no longer there. The scheduler

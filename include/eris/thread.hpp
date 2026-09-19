@@ -39,6 +39,11 @@ public:
     void set_syscall_stack(virt_addr top) { syscall_stack_ = top; }
     virt_addr syscall_stack() const { return syscall_stack_; }
 
+    // The tables this thread runs on. Zero means the kernel ones, anything
+    // else is the process it is carrying, and the scheduler switches to it.
+    void set_address_space(u64 root) { space_root_ = root; }
+    u64 address_space() const { return space_root_; }
+
 private:
     friend class Scheduler;
     friend class WaitQueue;
@@ -56,6 +61,7 @@ private:
 
     u64 wake_at_ = 0;
     virt_addr syscall_stack_ = 0;
+    u64 space_root_ = 0;
     Thread* queue_next_ = nullptr;
     Thread* list_next_ = nullptr;
 };

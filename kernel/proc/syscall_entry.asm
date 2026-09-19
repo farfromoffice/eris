@@ -19,9 +19,12 @@ PERCPU_USER_STACK   equ 32
 
 syscall_entry:
     swapgs
-    mov [gs:PERCPU_USER_STACK], rsp
+    mov [gs:PERCPU_USER_STACK], rsp     ; scratch, interrupts are off here
     mov rsp, [gs:PERCPU_KERNEL_STACK]
 
+    ; The user stack goes on the kernel stack rather than staying in the per
+    ; CPU block, because the thread may finish this call on another core.
+    push qword [gs:PERCPU_USER_STACK]
     push rcx                    ; the address to return to
     push r11                    ; the flags to restore
 
@@ -49,8 +52,8 @@ syscall_entry:
 
     pop r11
     pop rcx
+    pop rsp                     ; the user stack this call arrived on
 
-    mov rsp, [gs:PERCPU_USER_STACK]
     swapgs
     o64 sysret
 

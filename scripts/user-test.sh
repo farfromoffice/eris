@@ -8,7 +8,8 @@ set -euo pipefail
 
 KERNEL=${KERNEL:-build/eris32.elf}
 INITRD=${INITRD:-build/initrd.tar}
-TIMEOUT=${TIMEOUT:-40}
+CPUS=${CPUS:-1}
+TIMEOUT=${TIMEOUT:-60}
 LOG=${LOG:-build/user.log}
 DISK=${DISK:-build/user-disk.img}
 
@@ -43,8 +44,9 @@ timeout "$TIMEOUT" qemu-system-x86_64 \
     -display none \
     -no-reboot \
     -m 512M \
+    -smp "$CPUS" \
     -device isa-debug-exit,iobase=0xf4,iosize=0x04 \
-    -append "crashtest panic_exit test_exit" >/dev/null 2>&1 || true
+    -append "spintest crashtest panic_exit test_exit" >/dev/null 2>&1 || true
 
 status=0
 
@@ -63,6 +65,7 @@ check "init: hello from ring 3" "it printed through a syscall"
 check "init: pid is 1" "it learned its own identity"
 check "init: slept" "it slept and came back"
 check "proc: init left with code 42" "its exit code reached the kernel"
+check "spin: survived the ticks" "a long running program was preempted and still finished"
 check "crash: about to write" "the faulting program started"
 check "was killed" "the fault killed the process"
 check "still running after the program died" "the kernel survived it"

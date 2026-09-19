@@ -207,7 +207,9 @@ extern "C" void syscall_dispatch(SyscallFrame* frame)
     }
 }
 
-void syscall_init()
+// The call gate is per CPU state, and a thread that migrates expects to find
+// it wherever it lands, so every core installs it.
+void syscall_init_cpu()
 {
     write_msr(msr_efer, read_msr(msr_efer) | efer_syscall_enable);
 
@@ -219,8 +221,12 @@ void syscall_init()
     write_msr(msr_star, star);
     write_msr(msr_lstar, reinterpret_cast<u64>(&syscall_entry));
     write_msr(msr_sfmask, 1ULL << 9); // interrupts off while entering
+}
 
-    pr_info("syscall: entry at %p\n", reinterpret_cast<void*>(&syscall_entry));
+void syscall_init()
+{
+    syscall_init_cpu();
+    pr_info("syscall: entry at %p on every core\n", reinterpret_cast<void*>(&syscall_entry));
 }
 
 } // namespace eris

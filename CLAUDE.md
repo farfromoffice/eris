@@ -251,8 +251,10 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   compiled on that promise.
 * A thread running a program carries its own syscall stack, and the scheduler
   hands the CPU that one rather than the thread's own top while it is in use.
-* Ring 3 is not preemptible yet: the scheduler is held off while a program runs,
-  because there is nowhere to save a user context.
+* Ring 3 is preemptible. A tick lands on the thread's syscall stack, so the
+  switch saves it like any other kernel context. Everything the program needs
+  follows the thread: its syscall stack, its page tables and the `syscall` MSRs,
+  which every core installs at boot.
 * Mounts are set up after the modules load, because storage arrives as a
   module. The root is ramfs, `/dev` is devfs, and `/mnt` is whatever ext2 image
   the first block device carries.

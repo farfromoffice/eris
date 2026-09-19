@@ -35,7 +35,7 @@ KOBJS := $(foreach m,$(LOADABLE_MODULES),build/modules/$(m).ko)
 
 # Userspace. Freestanding and static, linked well above anything the kernel
 # maps, and packed into the initrd next to the modules.
-USER_PROGRAMS := init crash
+USER_PROGRAMS := init crash spin
 USER_BINARIES := $(foreach p,$(USER_PROGRAMS),build/user/$(p))
 USER_CFLAGS := -std=gnu17 -O2 -ffreestanding -mcmodel=large -fno-stack-protector -fno-pic \
                -mno-red-zone -mno-mmx -mno-sse -mno-sse2 -Wall -Wextra -Werror \

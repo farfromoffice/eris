@@ -354,6 +354,16 @@ void kernel_init(void*)
     if (cmdline_has("fstest"))
         fs_selftest();
 
+    if (cmdline_has("spintest")) {
+        int code = 0;
+        syscall_init();
+
+        const u64 before = ticks();
+        process_run("/spin", code);
+        pr_info("spintest: %lu timer ticks passed while it ran, exit code %d\n",
+                ticks() - before, code);
+    }
+
     if (cmdline_has("crashtest")) {
         int code = 0;
         syscall_init();

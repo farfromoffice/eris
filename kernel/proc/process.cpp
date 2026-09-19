@@ -299,26 +299,25 @@ int process_run(const char* path, int& exit_code)
     const virt_addr syscall_stack_top = mm::phys_to_virt(syscall_stack)
         + syscall_stack_pages * page_size;
 
-    if (Thread* self = current_thread(); self != nullptr)
+    if (Thread* self = current_thread(); self != nullptr) {
         self->set_syscall_stack(syscall_stack_top);
+        self->set_address_space(process->space_root());
+    }
 
     arch::tss_set_kernel_stack(syscall_stack_top);
 
-    // A timer tick that lands while ring 3 is running would switch threads on
-    // the interrupt stack the program is borrowing, so the scheduler is held
-    // off until the program leaves. Preempting user code needs a saved user
-    // context first, which is the next piece of work.
-    preempt_disable();
-
+    // A tick that lands in ring 3 pushes its frame onto this thread's syscall
+    // stack, so a switch saves and restores it like any other kernel context
+    // and the program resumes through the same interrupt return.
     ProcessTable::activate(*process);
     enter_user_mode(process->entry(), user_stack_top - 64);
 
-    preempt_enable();
-
     ProcessTable::release(*process);
 
-    if (Thread* self = current_thread(); self != nullptr)
+    if (Thread* self = current_thread(); self != nullptr) {
         self->set_syscall_stack(0);
+        self->set_address_space(0);
+    }
 
     mm::free_pages(syscall_stack, syscall_stack_pages);
 

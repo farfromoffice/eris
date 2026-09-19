@@ -153,10 +153,25 @@ void Scheduler::switch_to(Thread* next)
     set_current(cpu, next);
 
     // A thread that dropped into ring 3 keeps its own syscall stack, and the
-    // scheduler must not hand the CPU one that is already in use.
-    arch::tss_set_kernel_stack(next->syscall_stack_ != 0
-                                   ? next->syscall_stack_
-                                   : next->stack_base_ + next->stack_pages_ * page_size);
+    // scheduler must not hand the CPU one that is already in use. An idle
+    // thread has no stack of its own and never enters ring 3, so the previous
+    // value is left alone rather than replaced with zero.
+    const virt_addr kernel_stack = next->syscall_stack_ != 0
+        ? next->syscall_stack_
+        : (next->stack_base_ != 0 ? next->stack_base_ + next->stack_pages_ * page_size : 0);
+
+    if (kernel_stack != 0)
+        arch::tss_set_kernel_stack(kernel_stack);
+
+    // The address space follows the thread, otherwise a program resumed on
+    // another core comes back to tables that never mapped it.
+    const u64 wanted = next->space_root_ != 0 ? next->space_root_
+                                              : mm::AddressSpace::kernel().root();
+    u64 current = 0;
+    asm volatile("mov %%cr3, %0" : "=r"(current));
+
+    if (wanted != current)
+        asm volatile("mov %0, %%cr3" : : "r"(wanted) : "memory");
     context_switch(&previous->stack_pointer_, next->stack_pointer_);
 }
 

@@ -10,6 +10,7 @@
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
 #include <eris/printk.hpp>
+#include <eris/process.hpp>
 #include <eris/string.hpp>
 #include <eris/thread.hpp>
 #include <eris/time.hpp>
@@ -83,12 +84,16 @@ extern "C" void ap_entry()
     *trampoline_data(6) = 1;
 
     PerCpu& cpu = percpu_setup(index, apic_id);
-    cpu.kernel_stack_top = 0;
+
+    // The stack the boot CPU handed this core is also the one an interrupt
+    // from ring 3 has to land on until a thread brings its own.
+    cpu.kernel_stack_top = *trampoline_data(1);
 
     tss_init_cpu(cpu);
     gdt_init_cpu(cpu);
     idt_init();
     lapic_init_cpu();
+    syscall_init_cpu();
 
     sched_start_cpu();
 

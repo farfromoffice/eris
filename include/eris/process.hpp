@@ -30,6 +30,7 @@ public:
     int exit_code() const { return exit_code_; }
 
     virt_addr entry() const { return entry_; }
+    u64 space_root() const { return space_.root(); }
     u64 pages() const { return page_count_; }
 
     // True while the address the program handed the kernel is one it owns.
@@ -54,6 +55,7 @@ private:
 };
 
 void syscall_init();
+void syscall_init_cpu();
 
 Process* current_process();
 usize process_count();
