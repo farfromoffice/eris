@@ -10,6 +10,42 @@ extern eris::ExportedSymbol __eris_symtab_end[];
 }
 
 namespace eris {
+namespace {
+
+constexpr usize max_tables = 16;
+
+struct RegisteredTable {
+    const ExportedSymbol* table;
+    usize count;
+    virt_addr owner;
+};
+
+constinit RegisteredTable tables[max_tables]{};
+constinit usize table_count = 0;
+
+} // namespace
+
+bool symbol_register_table(const ExportedSymbol* table, usize count, virt_addr owner)
+{
+    if (table == nullptr || count == 0)
+        return false;
+
+    if (table_count >= max_tables)
+        return false;
+
+    tables[table_count++] = RegisteredTable{table, count, owner};
+    return true;
+}
+
+void symbol_unregister_owner(virt_addr owner)
+{
+    for (usize i = 0; i < table_count;) {
+        if (tables[i].owner == owner)
+            tables[i] = tables[--table_count];
+        else
+            ++i;
+    }
+}
 
 void* symbol_lookup(const char* name)
 {
@@ -17,6 +53,16 @@ void* symbol_lookup(const char* name)
         if (strcmp(symbol->name, name) == 0)
             return symbol->address;
     }
+
+    // Then whatever the loaded images brought with them.
+    for (usize i = 0; i < table_count; ++i) {
+        for (usize entry = 0; entry < tables[i].count; ++entry) {
+            const ExportedSymbol& symbol = tables[i].table[entry];
+            if (symbol.name != nullptr && strcmp(symbol.name, name) == 0)
+                return symbol.address;
+        }
+    }
+
     return nullptr;
 }
 

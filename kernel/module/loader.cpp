@@ -216,6 +216,54 @@ void apply_protections(const LoadedImage& loaded,
     }
 }
 
+void run_constructors(const u8* image,
+                      const elf::Header& header,
+                      const elf::SectionHeader* sections,
+                      const LoadedImage& loaded)
+{
+    const elf::SectionHeader& names = sections[header.section_name_index];
+
+    for (u16 i = 0; i < header.section_header_count; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        const char* name = string_at(image, names, section.name);
+
+        if (strcmp(name, ".init_array") != 0 && strcmp(name, ".ctors") != 0)
+            continue;
+
+        using Constructor = void (*)();
+        const auto* entries = reinterpret_cast<Constructor*>(loaded.placement[i].address);
+
+        for (usize entry = 0; entry < section.size / sizeof(Constructor); ++entry) {
+            if (entries[entry] != nullptr)
+                entries[entry]();
+        }
+    }
+}
+
+void register_exports(const u8* image,
+                      const elf::Header& header,
+                      const elf::SectionHeader* sections,
+                      const LoadedImage& loaded)
+{
+    const elf::SectionHeader& names = sections[header.section_name_index];
+
+    for (u16 i = 0; i < header.section_header_count; ++i) {
+        const elf::SectionHeader& section = sections[i];
+        if (strcmp(string_at(image, names, section.name), ".eris_symtab") != 0)
+            continue;
+
+        const auto* table = reinterpret_cast<const ExportedSymbol*>(loaded.placement[i].address);
+        const usize count = section.size / sizeof(ExportedSymbol);
+
+        if (!symbol_register_table(table, count, loaded.base))
+            pr_warn("module loader: no room for the exports of this image\n");
+        else
+            pr_info("module loader: %lu symbol%s joined the export table\n",
+                    static_cast<u64>(count),
+                    count == 1 ? "" : "s");
+    }
+}
+
 } // namespace
 
 // Loads a relocatable image, resolves it against the exported symbols and
@@ -292,6 +340,11 @@ int module_load_image(const void* data, usize length, const char* origin)
         release_image(loaded);
         return -1;
     }
+
+    // Constructors first: an export entry is filled in by one of them, so the
+    // table is empty until they have run.
+    run_constructors(image, header, sections, loaded);
+    register_exports(image, header, sections, loaded);
 
     apply_protections(loaded, header, sections);
 

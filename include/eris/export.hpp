@@ -13,6 +13,11 @@ struct ExportedSymbol {
 };
 
 void* symbol_lookup(const char* name);
+
+// A loaded image brings its own export table, which joins the kernel one for
+// as long as the module is around.
+bool symbol_register_table(const ExportedSymbol* table, usize count, virt_addr owner);
+void symbol_unregister_owner(virt_addr owner);
 usize symbol_count();
 const ExportedSymbol* symbol_at(usize index);
 

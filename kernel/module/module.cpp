@@ -2,6 +2,7 @@
 // Copyright (c) 2026 farfromoffice
 
 #include <eris/lock.hpp>
+#include <eris/export.hpp>
 #include <eris/module.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
@@ -239,6 +240,7 @@ int module_unload(const char* name)
             }
         }
 
+        symbol_unregister_owner(base);
         module_release_image(base, pages);
         pr_info("module %s unloaded, %lu KiB returned\n", name,
                 static_cast<u64>(pages * page_size / 1024));
