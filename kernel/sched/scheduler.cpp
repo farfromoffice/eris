@@ -152,7 +152,11 @@ void Scheduler::switch_to(Thread* next)
 
     set_current(cpu, next);
 
-    arch::tss_set_kernel_stack(next->stack_base_ + next->stack_pages_ * page_size);
+    // A thread that dropped into ring 3 keeps its own syscall stack, and the
+    // scheduler must not hand the CPU one that is already in use.
+    arch::tss_set_kernel_stack(next->syscall_stack_ != 0
+                                   ? next->syscall_stack_
+                                   : next->stack_base_ + next->stack_pages_ * page_size);
     context_switch(&previous->stack_pointer_, next->stack_pointer_);
 }
 

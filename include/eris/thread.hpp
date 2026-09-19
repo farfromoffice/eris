@@ -34,6 +34,11 @@ public:
     // for one of these.
     void wake();
 
+    // Where a syscall from ring 3 continues. Zero means this thread is not
+    // running a user program and its own stack top will do.
+    void set_syscall_stack(virt_addr top) { syscall_stack_ = top; }
+    virt_addr syscall_stack() const { return syscall_stack_; }
+
 private:
     friend class Scheduler;
     friend class WaitQueue;
@@ -50,6 +55,7 @@ private:
     usize stack_pages_ = 0;
 
     u64 wake_at_ = 0;
+    virt_addr syscall_stack_ = 0;
     Thread* queue_next_ = nullptr;
     Thread* list_next_ = nullptr;
 };

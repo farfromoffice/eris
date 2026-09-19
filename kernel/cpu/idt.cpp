@@ -9,10 +9,12 @@
 #include <eris/compiler.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
+#include <eris/process.hpp>
 #include <eris/thread.hpp>
 #include <eris/time.hpp>
 
 extern "C" void* isr_stub_table[256];
+extern "C" void leave_user_mode();
 
 namespace eris::arch {
 namespace {
@@ -135,6 +137,20 @@ extern "C" void isr_dispatch(Registers& regs)
         for (;;) {
             cli();
             hlt();
+        }
+    }
+
+    // A fault in ring 3 is the program's problem. It loses its process, the
+    // kernel keeps running and whoever started it is told what happened.
+    if (regs.vector < 32 && (regs.cs & 3) == 3) {
+        if (Process* process = current_process(); process != nullptr) {
+            pr_err("proc: %s took a %s at %lx and was killed\n",
+                   process->name(),
+                   exception_names[regs.vector],
+                   regs.rip);
+
+            process->exit(-static_cast<int>(regs.vector));
+            leave_user_mode();
         }
     }
 
