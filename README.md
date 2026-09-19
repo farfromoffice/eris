@@ -2,6 +2,13 @@
 
 Barebone x86_64 kernel written in C++23. Nothing much
 
+![The eris desktop](docs/screenshots/desktop.png)
+
+The shell is a module, the applications on it are modules of their own, and the
+text is TrueType rasterised at run time. `make run` brings it up.
+
+![Two applications open](docs/screenshots/windows.png)
+
 ### Writing a module
 
 ```cpp
@@ -21,7 +28,7 @@ ERIS_MODULE("mymod", "0.1", "you", "GPL-2.0-only", my_init, my_exit, "vga");
 
 ```
 make
-make run          # VGA window plus serial on stdout
+make run          # the desktop plus serial on stdout, KVM when it is available
 make run-serial   # serial only
 make iso          # needs grub2-mkrescue and xorriso
 ```

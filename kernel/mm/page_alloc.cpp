@@ -14,7 +14,7 @@ extern "C" eris::u8 __kernel_end[];
 namespace eris::mm {
 namespace {
 
-constexpr phys_addr managed_limit = 1ULL << 30;
+constexpr phys_addr managed_limit = 4ULL << 30;
 constexpr usize managed_pages = managed_limit / page_size;
 
 constinit u8 bitmap[managed_pages / 8]{};

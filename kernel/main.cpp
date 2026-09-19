@@ -312,7 +312,8 @@ void thread_selftest()
 
 void report_modules();
 void load_initrd_modules();
-void mount_filesystems();
+void mount_root();
+void mount_storage();
 void start_init();
 void module_selftest();
 void block_selftest();
@@ -334,8 +335,12 @@ void kernel_init(void*)
     // its device the moment its init runs.
     pci::init();
 
+    // The root comes up before the loadable modules, because a module that
+    // needs a file, like the desktop and its fonts, has to find one.
+    mount_root();
     load_initrd_modules();
-    mount_filesystems();
+    mount_storage();
+
     report_modules();
     start_init();
 
@@ -418,7 +423,14 @@ void load_initrd_modules()
     if (!initrd_available() || cmdline_has("modules.noload"))
         return;
 
-    for (usize i = 0; i < initrd_file_count(); ++i) {
+    constexpr usize max_images = 64;
+
+    const void* images[max_images]{};
+    usize lengths[max_images]{};
+    const char* names[max_images]{};
+    usize image_count = 0;
+
+    for (usize i = 0; i < initrd_file_count() && image_count < max_images; ++i) {
         const char* name = nullptr;
         usize length = 0;
 
@@ -430,7 +442,32 @@ void load_initrd_modules()
         if (memcmp(name, "modules/", 8) != 0)
             continue;
 
-        module_load_image(data, length, name);
+        images[image_count] = data;
+        lengths[image_count] = length;
+        names[image_count] = name;
+        ++image_count;
+    }
+
+    // An image is relocated against the symbols already exported, so one that
+    // calls into another module has to arrive after it. Rather than depend on
+    // the order the archive happens to have, the pass repeats while it is
+    // still making progress.
+    for (;;) {
+        usize mapped = 0;
+
+        for (usize i = 0; i < image_count; ++i) {
+            if (images[i] == nullptr)
+                continue;
+
+            if (module_load_image(images[i], lengths[i], names[i]) != 0)
+                continue;
+
+            images[i] = nullptr;
+            ++mapped;
+        }
+
+        if (mapped == 0)
+            break;
     }
 
     for (usize i = 0; i < module_count(); ++i) {
@@ -451,11 +488,15 @@ void load_initrd_modules()
 // then checks the pages came back and that a stale ABI stamp is refused.
 void module_selftest()
 {
-    const char* name = "desktop";
+    // A leaf is the only honest guinea pig here: a module something else
+    // depends on refuses to unload, and rightly so. The disk driver is a leaf
+    // in the descriptor graph but a mounted disk holds a reference on it.
+    // Check that too rather than asking for an unload that can't happen.
+    const char* name = "virtio_blk";
 
-    const char* file = "desktop.ko";
+    const char* file = "virtio_blk.ko";
     usize length = 0;
-    const void* image = initrd_find("desktop", length);
+    const void* image = initrd_find("virtio_blk", length);
 
     if (image == nullptr) {
         pr_err("module selftest: the initrd carries nothing to load\n");
@@ -465,6 +506,13 @@ void module_selftest()
     const Module* module = module_find(name);
     if (module == nullptr || module->state != ModuleState::Ready) {
         pr_err("module selftest: %s did not load from the initrd\n", name);
+        return;
+    }
+
+    if (module->dependents.held() || module->users.held()) {
+        pr_info("module selftest: %s is in use, dependents=%u users=%u, "
+                "leaving it alone\n",
+                name, module->dependents.value(), module->users.value());
         return;
     }
 
@@ -578,13 +626,42 @@ void block_selftest()
     mm::free_page(frame);
 }
 
-// Storage arrives through modules, so this runs after they have loaded: adopt
-// whatever they registered, then put a file system on top of it.
-void mount_filesystems()
+// The root is in memory and holds whatever the boot loader handed over, so it
+// exists before anything that might want to read a file.
+void mount_root()
 {
     fs::init();
     fs::mount("/", fs::ramfs_create());
 
+    for (usize i = 0; i < initrd_file_count(); ++i) {
+        const char* name = nullptr;
+        usize length = 0;
+
+        const void* image = initrd_data_at(i, name, length);
+        if (image == nullptr || name == nullptr || length == 0)
+            continue;
+
+        const char* base = name;
+        for (const char* p = name; *p != '\0'; ++p) {
+            if (*p == '/')
+                base = p + 1;
+        }
+
+        const bool program = memcmp(name, "bin/", 4) == 0;
+        const bool font = memcmp(name, "fonts/", 6) == 0;
+
+        if (!program && !font)
+            continue;
+
+        if (fs::Inode* file = fs::ramfs_create_file(base); file != nullptr)
+            file->write(0, image, length);
+    }
+}
+
+// Storage arrives through modules, so this runs after they have loaded: adopt
+// whatever they registered, then put a file system on top of it.
+void mount_storage()
+{
     block_register_module("vda", "virtio_blk_read", "virtio_blk_write", "virtio_blk_capacity");
 
     fs::mount("/dev", fs::devfs_create());
@@ -647,8 +724,7 @@ void fs_selftest()
             buffer[i] = '\0';
     }
 
-    pr_info("fs selftest: /mnt/hello.txt is %lu bytes and reads \"%s\"\n",
-            status.size, buffer);
+    pr_info("fs selftest: /mnt/hello.txt is %lu bytes and reads \"%s\"\n", status.size, buffer);
 
     for (usize i = 0; i < 8; ++i) {
         const char* entry = fs::list("/mnt", i);
@@ -661,8 +737,8 @@ void fs_selftest()
     fs::write_file("/dev/console", through_console, strlen(through_console));
 }
 
-// The initrd carries the first program next to the modules, so it is copied
-// into the root file system and started from there.
+// The first program lives in the root like everything else, so starting it is
+// a path lookup rather than a special case.
 void start_init()
 {
     const char* path = cmdline_value("init");
@@ -671,29 +747,6 @@ void start_init()
 
     if (cmdline_has("noinit"))
         return;
-
-    // The programs the initrd carries are copied into the root file system, so
-    // a path is a path no matter where the bytes came from.
-    for (usize i = 0; i < initrd_file_count(); ++i) {
-        const char* name = nullptr;
-        usize length = 0;
-
-        const void* image = initrd_data_at(i, name, length);
-        if (image == nullptr || name == nullptr || length == 0)
-            continue;
-
-        const char* base = name;
-        for (const char* p = name; *p != '\0'; ++p) {
-            if (*p == '/')
-                base = p + 1;
-        }
-
-        if (memcmp(name, "bin/", 4) != 0)
-            continue;
-
-        if (fs::Inode* file = fs::ramfs_create_file(base); file != nullptr)
-            file->write(0, image, length);
-    }
 
     fs::Stat status{};
     if (fs::stat(path, status) != 0) {

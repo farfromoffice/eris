@@ -5,6 +5,7 @@
 #include <eris/export.hpp>
 #include <eris/lock.hpp>
 #include <eris/mm.hpp>
+#include <eris/module.hpp>
 #include <eris/paging.hpp>
 #include <eris/printk.hpp>
 #include <eris/string.hpp>
@@ -171,7 +172,13 @@ bool block_register_module(const char* name, const char* read_symbol,
     ModuleBlockDevice& device = module_devices[module_device_total++];
     device.bind(name, read, write, capacity);
 
-    return block_register(&device);
+    if (!block_register(&device)) {
+        --module_device_total;
+        return false;
+    }
+
+    module_get_owner(reinterpret_cast<const void*>(read));
+    return true;
 }
 
 } // namespace eris

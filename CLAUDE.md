@@ -39,6 +39,8 @@ kernel/module/       module.cpp symbols.cpp
 kernel/lib/          console.cpp printk.cpp panic.cpp serial.cpp string.cpp init.cpp
 include/eris/        public kernel API
 modules/<name>/      in tree modules
+modules/internal_apps/<name>/  the apps that ship with the desktop
+fonts/               the faces the desktop loads at run time
 linker/kernel.ld     image layout, module and symbol sections
 scripts/             build and CI helpers
 ```
@@ -103,12 +105,12 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/panic.hpp` | `panic`, never returns |
 | `eris/mm.hpp` | page allocator, `heap_init`, `kmalloc` `kzalloc` `kfree` |
 | `eris/paging.hpp` | `AddressSpace`, `PageFlags`, `vmalloc_reserve`, `map_device`, `region_name`, `phys_to_virt` |
-| `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state, `module_load_image` |
+| `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, `module_get_owner`, `module_snapshot`, taint state, `module_load_image` |
 | `eris/elf.hpp` | ELF64 relocatable structures the loader reads |
 | `eris/initrd.hpp` | Tar archive lookup for the modules the boot loader passed in |
 | `eris/device.hpp` | `Device`, `BusDevice`, `Driver`, the registry that binds them |
 | `eris/pci.hpp` | Configuration space, enumeration, BAR decoding, capabilities |
-| `eris/module_api.hpp` | The C ABI a loadable module is allowed to call |
+| `eris/module_api.hpp` | The C ABI a loadable module is allowed to call, `eris_schedule_work` and `ErisModuleInfo` included |
 | `eris/block.hpp` | `BlockDevice`, the registry, byte granular reads |
 | `eris/vfs.hpp` | `Inode`, `FileSystem`, mount, resolve, read, write, list |
 | `eris/ramfs.hpp` | Files in the heap |
@@ -119,14 +121,14 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
 | `eris/apic.hpp` | Local APIC, IO APIC, the vectors they use |
-| `eris/work.hpp` | `schedule_work`, `work_run_pending`, `work_start` |
+| `eris/work.hpp` | `schedule_work`, `work_run_pending`, `work_start`, `work_cancel_owner` |
 | `eris/thread.hpp` | `Thread`, `WaitQueue`, `yield`, `thread_sleep_ms`, preempt count |
 | `eris/lock.hpp` | `SpinLock`, `IrqSpinLock`, `RecursiveIrqLock`, guards |
 | `eris/atomic.hpp` | `Atomic<T>`, `RefCount`, `memory_barrier`, `cpu_relax` |
 | `eris/cpu.hpp` | Per CPU block, TSS, IST stacks, `smp_init`, `this_cpu` |
 | `eris/io.hpp` | `inb` `outb` `io_wait` `cli` `sti` `hlt` |
 | `eris/serial.hpp` | `serial_init` for the early console |
-| `eris/time.hpp` | `monotonic_ns`, `timer_after`, `timer_every`, `timer_cancel`, `udelay`, `ticks` |
+| `eris/time.hpp` | `monotonic_ns`, `timer_after`, `timer_every`, `timer_cancel`, `timer_cancel_owner`, `udelay`, `ticks` |
 | `eris/string.hpp` | `memset` `memcpy` `memmove` `memcmp` `strlen` `strcmp` |
 
 ## Modules
@@ -135,19 +137,48 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | --- | --- | --- | --- |
 | `vga` | 0.1 | none | `vga_clear` `vga_put_cell` `vga_write` `vga_fill_row` `vga_set_color` `vga_console_enable` `vga_width` `vga_height` |
 | `keyboard` | 0.1 | none | `keyboard_subscribe` `keyboard_unsubscribe` |
-| `desktop` | 0.1 | `vga`, `keyboard` | none, it is a leaf |
 | `virtio_blk` | 0.1 | none | `virtio_blk_present` `virtio_blk_capacity` `virtio_blk_read` `virtio_blk_write` |
 | `rtc` | 0.1 | none | `rtc_read` `rtc_unix_time` |
+| `fbdev` | 0.1 | none | `fb_present` `fb_width` `fb_height` `fb_pitch` `fb_pixels` `fb_blit` |
+| `ps2mouse` | 0.1 | none | `mouse_present` `mouse_subscribe` `mouse_unsubscribe` |
+| `desktop` | 0.3 | `fbdev`, `keyboard`, `ps2mouse`, `rtc` | `desktop_register_app` `desktop_unregister_app` `desktop_available` `desktop_app_registered` |
+| `system` | 0.1 | `desktop` | none, it is a leaf |
+| `modules` | 0.1 | `desktop` | none, it is a leaf |
+| `console` | 0.1 | `desktop` | none, it is a leaf |
+| `about` | 0.1 | `desktop` | none, it is a leaf |
 
-`vga` and `keyboard` are linked into the image. `desktop`, `virtio_blk` and
-`rtc` are built as `build/modules/<name>.ko`, packed into `build/initrd.tar` and
-loaded at boot. `BUILTIN_MODULES` in the Makefile decides which is which.
+`vga` and `keyboard` are linked into the image. Everything else is built as
+`build/modules/<name>.ko`, packed into `build/initrd.tar` and loaded at boot.
+`BUILTIN_MODULES` in the Makefile decides which is which.
 
-Exported symbols right now: 8, six from `vga` and two from `keyboard`.
-`vga_width` and `vga_height` are callable but not exported yet.
+The last four are applications rather than drivers, so they live under
+`modules/internal_apps/<name>/`. The Makefile walks both depths, and the only
+thing the nesting changes is where the sources sit.
+
+Exported symbols right now: 57.
+
+An app is a module that registers a `DesktopApp` with the shell, declared in
+`modules/desktop/app.hpp`. It brings a name, a subtitle, an icon and a `draw`
+callback, and the shell hands it a painter with fills, rounded rectangles,
+text and the shell palette. An app never touches the framebuffer, a window
+frame or the pointer, which is why the apps and the shell can be built apart
+and loaded in any order.
+
+Each app keeps its artwork as `icon.svg` next to its source.
+`scripts/gen-icon.py` rasterises it into the committed `icon.cpp`, because the
+kernel has no vector rasteriser and is not getting one. Run the script when an
+icon changes; the build does not depend on it.
+
+Text is real TrueType. `modules/desktop/truetype.cpp` parses and rasterises the
+faces at run time out of `/eris-sans.ttf` and `/eris-mono.ttf`, which the
+initrd carries from `fonts/`. Those two are Adwaita Sans and Adwaita Mono cut
+down to the characters the shell draws by `scripts/subset-font.py`, and
+`modules/desktop/FONT` holds their licence. No font is ever compiled into a
+source file.
 
 `desktop` takes over the screen by calling `vga_console_enable(false)`, so kernel
-log lines stop appearing on VGA once it loads. Serial keeps everything.
+log lines stop appearing on VGA once it loads. Serial keeps everything, and the
+console app shows the same stream inside a window.
 
 ## Invariants
 
@@ -176,23 +207,51 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * A module counts two kinds of reference separately. `dependents` is how many
   `Ready` modules list it as a dependency: each takes one on the transition to
   `Ready` and drops it on unload, and a failed load holds none. No failure
-  path in the loader has to undo a reference. `users` counts `module_get` calls
-  not yet matched by `module_put`. Unload needs both at zero. Dropping either kind
-  of reference when none is held panics at the call that did it.
+  path in the loader has to undo a reference. `users` counts `module_get` and
+  `module_get_owner` calls not yet matched by a put. Unload needs both at zero.
+  Dropping either kind of reference when none is held panics at the call that
+  did it.
+* Nothing may point into a module image when its frames go back to the
+  allocator. `module_unload` runs the module's exit, then cancels the timers
+  and drops the queued work whose callback lives in the image, waiting out one
+  already running and the loader unregisters an image's exports on every path
+  that releases it. Code that keeps a pointer into an image for longer, a
+  registered block device for instance, holds a reference through
+  `module_get_owner` instead and a module in use refuses to unload.
+* A module that unloads is `Unloading` from the moment the unload claims it
+  until it is gone: a loadable one until its slot leaves the table, a builtin
+  one until the end because a builtin keeps its slot and its code and becomes
+  `Registered` again. The state is claimed under the table lock and it is
+  what keeps a second unload, a `module_get` and a `module_load` out while the
+  lock is dropped for the exit and for the callback drain. Going back to
+  `Registered` any earlier lets a load on another core run the module's init
+  and revive code that this unload is about to free. The table is only
+  rearranged under that lock. A pointer into it is never held across the gap:
+  the unload path looks the module up again by name.
+* The module ABI hands out copies, never pointers into an image. The strings in
+  a descriptor live in the module's own pages. `eris_module_at` fills an
+  `ErisModuleInfo` the caller owns.
 * `.bss` is cleared in the boot stub, not in `call_global_ctors`. The stack, the
   page tables and the allocator bitmap live in `.bss` and are already in use by
   then. The stub clears the direction flag first, because multiboot leaves it
   undefined and both `rep stosb` and the C++ ABI expect it clear.
 * The kernel runs on page tables it built itself after `paging_init`. The boot
   stub's tables only exist to reach that point.
-* Address space layout: the first GiB is a direct map, writable and never
+* Address space layout: the first four GiB are a direct map, writable and never
   executable, because the allocator reaches every frame through it. The kernel
   image inside it is remapped with 4 KiB pages carrying real permissions: text
   read execute, rodata read only, data and bss writable and no execute. The
-  range from 1 GiB to 2 GiB is the vmalloc area, empty until something reserves
+  range from 4 GiB to 8 GiB is the vmalloc area, empty until something reserves
   part of it, and every reservation gets a guard page after it.
 * `CR0.WP` and `EFER.NXE` are set in `paging_init`. Without the first, ring 0
   writes through read only pages; without the second, the NX bit is ignored.
+* `unmap` and `protect` broadcast a TLB shootdown when they changed anything
+  and another core is online. `invlpg` reaches one core, without it another
+  core keeps the permissions a page used to have: module text stays writable
+  and not executable there which is the opposite of what the loader just
+  asked for. The broadcast waits for delivery rather than for the other cores
+  to run the handler because it is sent with the page table lock held and a
+  core spinning for that lock has interrupts off.
 * `phys_to_virt` and `virt_to_phys` are the identity today. They exist so the
   higher half move is one edit rather than a hunt, and nothing should open code
   the conversion.
@@ -202,8 +261,8 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
 * The heap reserves 64 MiB of virtual space and commits 2 MiB at a time. It is
   first fit with block merging, grows when an allocation does not fit and never
   shrinks.
-* The page allocator manages the first GiB only, because that is all the direct
-  map covers. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
+* The page allocator manages the first four GiB only, because that is all the
+  direct map covers. Its bitmap is a 32 KiB array in `.bss`, so it no longer depends on
   whatever sits after `__kernel_end`.
 * `page_alloc_init` reserves the low megabyte, the kernel image and the data the
   bootloader left behind, the multiboot info block and the module strings
@@ -212,6 +271,26 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   `noexcept`. A `new` expression returns `nullptr` when the heap is exhausted,
   and using it before `heap_init` is a null dereference.
 * Fixed limits: 64 modules, 4 consoles, 8 keyboard subscribers, 16 IRQ lines.
+* A module image is allocated from the direct map rather than the vmalloc area.
+  The relocations a compiler emits for kernel code are 32 bit and relative, so
+  an image further than two gigabytes from the kernel cannot reach it.
+* Loadable images are relocated against the symbols already exported, so an
+  image that calls into another module has to arrive after it. `kernel/main.cpp`
+  repeats the pass while it still maps something, which is why the order inside
+  the archive does not matter.
+* The desktop paints into memory and sends only the rows that differ from what
+  the screen already holds. Writes to the aperture are slow enough to be seen,
+  so a still picture sends nothing at all.
+* `desktop_unregister_app` returns only once nothing is drawing that app any
+  more because the unload frees the image its `draw` and its icon live in the
+  moment the app's exit returns. The app list has one writer at a time and
+  readers that never wait: a frame or an input event that lands while the list
+  is changing is skipped, and the next frame draws the new list. Registration
+  goes through the same handshake, so half an entry is never visible.
+* The frame timer only asks for a frame, it never paints one. Painting takes
+  milliseconds and runs on the work thread, and the request flag is cleared
+  after the frame rather than before, or two cores paint the same canvas at
+  once and the result tears.
 * Interrupt vectors 0 to 31 panic, 32 to 47 dispatch to IRQ handlers and send an
   end of interrupt, 0x40 is the local APIC timer, 0xFF is the spurious vector
   and is ignored without an end of interrupt, everything else logs a warning.
@@ -269,9 +348,10 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   init only makes the boot log claim something is broken.
 * A module ABI is `extern "C"` on purpose. A mangled name is not something the
   export table can promise to keep.
-* Adding a header dependency to `include/eris/module.hpp` rebuilds every module,
-  which is how a stale object file once produced a duplicate descriptor symbol.
-  `make clean` when the macro changes.
+* The loadable modules carry their own header dependencies in `DEPS`, a
+  change to `include/eris/module.hpp` rebuilds them and the initrd along with
+  the kernel. Without that a bumped `module_abi_version` leaves ABI stamped
+  images in the archive that the kernel then refuses one by one.
 * `ERIS_MODULE` builds its dependency array with `__VA_OPT__`. Passing no deps is
   fine, passing an empty string is not.
 * A module init that fails leaves the module in the failed state with its error
@@ -302,6 +382,15 @@ log lines stop appearing on VGA once it loads. Serial keeps everything.
   Use an address above the mapped gigabyte to provoke a page fault.
 * Recursion written to overflow the stack gets turned into a loop by the
   optimiser unless the frame address is passed to an opaque asm statement.
+* `make run` asks for KVM when `/dev/kvm` is writable. Without it the whole
+  shell is rendered by an interpreted CPU, a frame takes over a hundred
+  milliseconds and the screen visibly crawls. It is not a bug in the compositor.
+* The desktop needs its faces before it can draw anything, so the root file
+  system is mounted before the loadable modules and the fonts ride in the
+  initrd. A shell that cannot find them refuses to start rather than drawing
+  boxes.
+* QEMU's `mouse_move` with a huge delta floods the PS/2 queue and the pointer
+  stops answering. Drive it in steps of eighty or so when scripting a click.
 
 ## Verification
 
@@ -322,6 +411,7 @@ CPUS=4 ./scripts/thread-test.sh
 ./scripts/device-test.sh
 ./scripts/fs-test.sh
 ./scripts/user-test.sh
+./scripts/desktop-test.sh
 ```
 
 `boot-test.sh` fails on a missing module line, on a panic, on a taint warning
@@ -330,7 +420,9 @@ and on an empty serial log. `faultinject.sh` does the opposite: it drives
 `panic` through the panic path and fails if any of them does not report a panic
 with a backtrace. The `mmtest` switch runs the heap growth check at boot and
 `timetest` measures the clock against a known delay and a timer deadline.
-Paste both in the pull request.
+`desktop-test.sh` boots the shell on a framebuffer, dumps the screen through the
+QEMU monitor and checks that the top bar, the icons and the taskbar actually
+carry pixels. Paste both in the pull request.
 
 ## License
 

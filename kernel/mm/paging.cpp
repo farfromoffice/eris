@@ -37,7 +37,9 @@ constexpr u64 pte_address_mask = 0x000FFFFFFFFFF000ULL;
 constexpr usize huge_page_size = 2 * 1024 * 1024;
 constexpr usize entries_per_table = 512;
 
-constexpr phys_addr direct_limit = 1ULL << 30;
+// Four gigabytes, because the firmware puts its tables just under the top of
+// low memory and a machine with two gigabytes of RAM puts them past one.
+constexpr phys_addr direct_limit = 4ULL << 30;
 
 constinit AddressSpace kernel_space{};
 
@@ -87,6 +89,19 @@ constexpr usize index_of(virt_addr address, u8 level)
 void invalidate(virt_addr address)
 {
     asm volatile("invlpg (%0)" : : "r"(address) : "memory");
+}
+
+// invlpg only reaches the core that runs it. Every other core may still hold
+// the entry as it was, which after a permission change is the difference
+// between module text being executable and faulting on it. The broadcast is
+// sent with the table lock held, so it waits for delivery and not for the
+// other cores to run the handler: one of them may be spinning for that same
+// lock with interrupts off, and waiting for its acknowledgement here would
+// never end.
+void shootdown_others()
+{
+    if (arch::cpu_online_count() > 1)
+        arch::lapic_broadcast_ipi(arch::vector_tlb_shootdown);
 }
 
 void enable_no_execute()
@@ -191,22 +206,27 @@ bool AddressSpace::map(virt_addr address, phys_addr frame, usize length, PageFla
 
 bool AddressSpace::unmap(virt_addr address, usize length)
 {
-    const bool shared = arch::cpu_online_count() > 1;
     IrqGuard guard(table_lock);
+
+    bool complete = true;
+    usize changed = 0;
 
     for (usize offset = 0; offset < length; offset += page_size) {
         u64* table = table_for(address + offset, true);
-        if (table == nullptr)
-            return false;
+        if (table == nullptr) {
+            complete = false;
+            break;
+        }
 
         table[index_of(address + offset, 0)] = 0;
         invalidate(address + offset);
+        ++changed;
     }
 
-    if (shared)
-        arch::lapic_broadcast_ipi(arch::vector_tlb_shootdown);
+    if (changed != 0)
+        shootdown_others();
 
-    return true;
+    return complete;
 }
 
 bool AddressSpace::protect(virt_addr address, usize length, PageFlags flags)
@@ -215,20 +235,31 @@ bool AddressSpace::protect(virt_addr address, usize length, PageFlags flags)
     const u64 bits = encode(flags);
     const bool user = has(flags, PageFlags::User);
 
+    bool complete = true;
+    usize changed = 0;
+
     for (usize offset = 0; offset < length; offset += page_size) {
         u64* table = table_for(address + offset, true, user);
-        if (table == nullptr)
-            return false;
+        if (table == nullptr) {
+            complete = false;
+            break;
+        }
 
         u64& entry = table[index_of(address + offset, 0)];
-        if ((entry & pte_present) == 0)
-            return false;
+        if ((entry & pte_present) == 0) {
+            complete = false;
+            break;
+        }
 
         entry = (entry & pte_address_mask) | bits;
         invalidate(address + offset);
+        ++changed;
     }
 
-    return true;
+    if (changed != 0)
+        shootdown_others();
+
+    return complete;
 }
 
 phys_addr AddressSpace::translate(virt_addr address) const
@@ -292,18 +323,25 @@ void paging_init()
     // the allocator hands out is touched through this window. It is writable
     // but never executable, the kernel image below gets the real permissions.
     u64* pdpt = allocate_table();
-    u64* directory = allocate_table();
-    if (pdpt == nullptr || directory == nullptr)
+    if (pdpt == nullptr)
         panic("paging: no memory for the direct map");
 
     pml4[0] = virt_to_phys(reinterpret_cast<virt_addr>(pdpt)) | pte_present | pte_write;
-    pdpt[0] = virt_to_phys(reinterpret_cast<virt_addr>(directory)) | pte_present | pte_write;
 
-    for (usize i = 0; i < entries_per_table; ++i) {
-        const phys_addr frame = static_cast<phys_addr>(i) * huge_page_size;
-        if (frame >= direct_limit)
-            break;
-        directory[i] = frame | pte_present | pte_write | pte_huge | pte_no_execute;
+    for (usize gigabyte = 0; gigabyte * (1ULL << 30) < direct_limit; ++gigabyte) {
+        u64* directory = allocate_table();
+        if (directory == nullptr)
+            panic("paging: no memory for the direct map");
+
+        pdpt[gigabyte] = virt_to_phys(reinterpret_cast<virt_addr>(directory))
+            | pte_present | pte_write;
+
+        for (usize i = 0; i < entries_per_table; ++i) {
+            const phys_addr frame = gigabyte * (1ULL << 30)
+                + static_cast<phys_addr>(i) * huge_page_size;
+
+            directory[i] = frame | pte_present | pte_write | pte_huge | pte_no_execute;
+        }
     }
 
     const auto text_start = reinterpret_cast<virt_addr>(__text_start);
