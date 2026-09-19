@@ -105,12 +105,12 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/panic.hpp` | `panic`, never returns |
 | `eris/mm.hpp` | page allocator, `heap_init`, `kmalloc` `kzalloc` `kfree` |
 | `eris/paging.hpp` | `AddressSpace`, `PageFlags`, `vmalloc_reserve`, `map_device`, `region_name`, `phys_to_virt` |
-| `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, taint state, `module_load_image` |
+| `eris/module.hpp` | `ERIS_MODULE`, load, unload, find, get, put, `module_get_owner`, `module_snapshot`, taint state, `module_load_image` |
 | `eris/elf.hpp` | ELF64 relocatable structures the loader reads |
 | `eris/initrd.hpp` | Tar archive lookup for the modules the boot loader passed in |
 | `eris/device.hpp` | `Device`, `BusDevice`, `Driver`, the registry that binds them |
 | `eris/pci.hpp` | Configuration space, enumeration, BAR decoding, capabilities |
-| `eris/module_api.hpp` | The C ABI a loadable module is allowed to call, `eris_schedule_work` included |
+| `eris/module_api.hpp` | The C ABI a loadable module is allowed to call, `eris_schedule_work` and `ErisModuleInfo` included |
 | `eris/block.hpp` | `BlockDevice`, the registry, byte granular reads |
 | `eris/vfs.hpp` | `Inode`, `FileSystem`, mount, resolve, read, write, list |
 | `eris/ramfs.hpp` | Files in the heap |
@@ -121,14 +121,14 @@ Nothing before step 3 may allocate. Nothing before step 1 may print.
 | `eris/irq.hpp` | `Registers`, `irq_register`, `irq_init`, mask, unmask, eoi |
 | `eris/acpi.hpp` | Table lookup, MADT results, GSI mapping, CPU count |
 | `eris/apic.hpp` | Local APIC, IO APIC, the vectors they use |
-| `eris/work.hpp` | `schedule_work`, `work_run_pending`, `work_start` |
+| `eris/work.hpp` | `schedule_work`, `work_run_pending`, `work_start`, `work_cancel_owner` |
 | `eris/thread.hpp` | `Thread`, `WaitQueue`, `yield`, `thread_sleep_ms`, preempt count |
 | `eris/lock.hpp` | `SpinLock`, `IrqSpinLock`, `RecursiveIrqLock`, guards |
 | `eris/atomic.hpp` | `Atomic<T>`, `RefCount`, `memory_barrier`, `cpu_relax` |
 | `eris/cpu.hpp` | Per CPU block, TSS, IST stacks, `smp_init`, `this_cpu` |
 | `eris/io.hpp` | `inb` `outb` `io_wait` `cli` `sti` `hlt` |
 | `eris/serial.hpp` | `serial_init` for the early console |
-| `eris/time.hpp` | `monotonic_ns`, `timer_after`, `timer_every`, `timer_cancel`, `udelay`, `ticks` |
+| `eris/time.hpp` | `monotonic_ns`, `timer_after`, `timer_every`, `timer_cancel`, `timer_cancel_owner`, `udelay`, `ticks` |
 | `eris/string.hpp` | `memset` `memcpy` `memmove` `memcmp` `strlen` `strcmp` |
 
 ## Modules
@@ -207,9 +207,25 @@ console app shows the same stream inside a window.
 * A module counts two kinds of reference separately. `dependents` is how many
   `Ready` modules list it as a dependency: each takes one on the transition to
   `Ready` and drops it on unload, and a failed load holds none. No failure
-  path in the loader has to undo a reference. `users` counts `module_get` calls
-  not yet matched by `module_put`. Unload needs both at zero. Dropping either kind
-  of reference when none is held panics at the call that did it.
+  path in the loader has to undo a reference. `users` counts `module_get` and
+  `module_get_owner` calls not yet matched by a put. Unload needs both at zero.
+  Dropping either kind of reference when none is held panics at the call that
+  did it.
+* Nothing may point into a module image when its frames go back to the
+  allocator. `module_unload` runs the module's exit, then cancels the timers
+  and drops the queued work whose callback lives in the image, waiting out one
+  already running and the loader unregisters an image's exports on every path
+  that releases it. Code that keeps a pointer into an image for longer, a
+  registered block device for instance, holds a reference through
+  `module_get_owner` instead and a module in use refuses to unload.
+* A module that unloads is `Unloading` for as long as its exit runs. The state
+  is claimed under the table lock which keeps a second unload and any new
+  `module_get` out while the lock is dropped for the exit itself. The table is
+  only rearranged under that lock. A pointer into it is never held across
+  the gap: the unload path looks the module up again by name.
+* The module ABI hands out copies, never pointers into an image. The strings in
+  a descriptor live in the module's own pages. `eris_module_at` fills an
+  `ErisModuleInfo` the caller owns.
 * `.bss` is cleared in the boot stub, not in `call_global_ctors`. The stack, the
   page tables and the allocator bitmap live in `.bss` and are already in use by
   then. The stub clears the direction flag first, because multiboot leaves it
@@ -314,9 +330,10 @@ console app shows the same stream inside a window.
   init only makes the boot log claim something is broken.
 * A module ABI is `extern "C"` on purpose. A mangled name is not something the
   export table can promise to keep.
-* Adding a header dependency to `include/eris/module.hpp` rebuilds every module,
-  which is how a stale object file once produced a duplicate descriptor symbol.
-  `make clean` when the macro changes.
+* The loadable modules carry their own header dependencies in `DEPS`, a
+  change to `include/eris/module.hpp` rebuilds them and the initrd along with
+  the kernel. Without that a bumped `module_abi_version` leaves ABI stamped
+  images in the archive that the kernel then refuses one by one.
 * `ERIS_MODULE` builds its dependency array with `__VA_OPT__`. Passing no deps is
   fine, passing an empty string is not.
 * A module init that fails leaves the module in the failed state with its error
