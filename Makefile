@@ -26,11 +26,16 @@ LDFLAGS  := -n -nostdlib --no-warn-rwx-segments -T linker/kernel.ld
 # Modules named here are linked into the image. Everything else under modules/
 # is built as a loadable object and packed into the initrd.
 BUILTIN_MODULES ?= vga keyboard
-ALL_MODULES := $(notdir $(patsubst %/,%,$(wildcard modules/*/)))
+# The apps that ship with the desktop live one level down, under
+# modules/internal_apps, because they are applications rather than drivers.
+MODULE_DIRS := $(filter-out modules/internal_apps,\
+                 $(patsubst %/,%,$(wildcard modules/*/) $(wildcard modules/internal_apps/*/)))
+ALL_MODULES := $(notdir $(MODULE_DIRS))
 LOADABLE_MODULES := $(filter-out $(BUILTIN_MODULES),$(ALL_MODULES))
 
-BUILTIN_SRCS := $(foreach m,$(BUILTIN_MODULES),$(wildcard modules/$(m)/*.cpp))
-LOADABLE_SRCS := $(foreach m,$(LOADABLE_MODULES),modules/$(m)/$(m).cpp)
+module_dir = $(filter %/$(1),$(MODULE_DIRS))
+
+BUILTIN_SRCS := $(foreach m,$(BUILTIN_MODULES),$(wildcard $(call module_dir,$(m))/*.cpp))
 KOBJS := $(foreach m,$(LOADABLE_MODULES),build/modules/$(m).ko)
 
 # Userspace. Freestanding and static, linked well above anything the kernel
@@ -73,11 +78,15 @@ $(KERNEL): $(OBJS) linker/kernel.ld scripts/gen-ksyms.sh
 $(KERNEL32): $(KERNEL)
 	$(OBJCOPY) -O elf32-i386 $< $@
 
-# A loadable module is the relocatable object itself, the loader resolves it
-# against the exported symbols at run time.
-build/modules/%.ko: modules/%/$$*.cpp
-	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) -c $< -o $@
+# A loadable module is a relocatable object, so a module made of several files
+# is the partial link of them and the loader still sees one image.
+define module_image
+build/modules/$(1).ko: $(patsubst %.cpp,build/%.o,$(wildcard $(call module_dir,$(1))/*.cpp))
+	@mkdir -p $$(dir $$@)
+	$$(LD) -r -o $$@ $$^
+endef
+
+$(foreach module,$(LOADABLE_MODULES),$(eval $(call module_image,$(module))))
 
 build/user/crt0.o: user/lib/crt0.asm
 	@mkdir -p $(dir $@)
@@ -90,8 +99,10 @@ build/user/%.o: user/$$*/$$*.c
 build/user/%: build/user/%.o build/user/crt0.o user/link.ld
 	$(LD) -n -nostdlib -T user/link.ld -o $@ build/user/crt0.o $<
 
-$(INITRD): $(KOBJS) $(USER_BINARIES) scripts/mkinitrd.sh
-	./scripts/mkinitrd.sh $@ $(KOBJS) $(USER_BINARIES)
+FONTS := $(wildcard fonts/*.ttf)
+
+$(INITRD): $(KOBJS) $(USER_BINARIES) $(FONTS) scripts/mkinitrd.sh
+	./scripts/mkinitrd.sh $@ $(KOBJS) $(USER_BINARIES) $(FONTS)
 
 build/%.o: %.cpp
 	@mkdir -p $(dir $@)
@@ -110,11 +121,23 @@ build/%.o: %.asm
 	@mkdir -p $(dir $@)
 	$(ASM) $(ASMFLAGS) $< -o $@
 
+# Enough memory for the desktop to keep a full screen back buffer, and enough
+# display memory for the mode it asks the adapter for.
+QEMU_MEMORY ?= 2G
+QEMU_VIDEO ?= -vga std -global VGA.vgamem_mb=64
+QEMU_CORES ?= 4
+
+# Software rendering at sixty frames a second is far more than an interpreted
+# CPU can keep up with, and the screen tears visibly without hardware help.
+QEMU_ACCEL ?= $(shell test -w /dev/kvm && echo "-enable-kvm -cpu host")
+
 run: $(KERNEL32) $(INITRD)
-	qemu-system-x86_64 -kernel $(KERNEL32) -initrd $(INITRD) -serial stdio -m 512M
+	qemu-system-x86_64 $(QEMU_ACCEL) -kernel $(KERNEL32) -initrd $(INITRD) -serial stdio \
+		-m $(QEMU_MEMORY) -smp $(QEMU_CORES) $(QEMU_VIDEO)
 
 run-serial: $(KERNEL32) $(INITRD)
-	qemu-system-x86_64 -kernel $(KERNEL32) -initrd $(INITRD) -serial stdio -display none -m 512M
+	qemu-system-x86_64 $(QEMU_ACCEL) -kernel $(KERNEL32) -initrd $(INITRD) -serial stdio -display none \
+		-m $(QEMU_MEMORY) -smp $(QEMU_CORES) $(QEMU_VIDEO)
 
 iso: $(KERNEL)
 	@mkdir -p build/iso/boot/grub
