@@ -31,8 +31,13 @@ void eris_irq_mask(eris::u8 irq);
 
 eris::u64 eris_monotonic_ns();
 void eris_udelay(eris::u64 microseconds);
+eris::u32 eris_timer_every(eris::u64 period_ns, void (*callback)(void*), void* context);
+void eris_timer_cancel(eris::u32 handle);
 void eris_sleep_ms(eris::u64 milliseconds);
 void eris_yield();
+
+// Runs a function later, out of interrupt context, on the kernel work thread.
+bool eris_schedule_work(void (*work)(void*), void* context);
 
 eris::u8 eris_inb(eris::u16 port);
 eris::u16 eris_inw(eris::u16 port);
@@ -40,6 +45,20 @@ eris::u32 eris_inl(eris::u16 port);
 void eris_outb(eris::u16 port, eris::u8 value);
 void eris_outw(eris::u16 port, eris::u16 value);
 void eris_outl(eris::u16 port, eris::u32 value);
+
+void eris_console_subscribe(void (*sink)(char));
+void eris_console_unsubscribe();
+
+void eris_memory_stats(eris::u64* total_pages, eris::u64* free_pages, eris::u64* heap_bytes);
+eris::usize eris_cpu_count();
+void eris_version(const char** version, const char** name);
+
+eris::usize eris_module_count();
+bool eris_module_at(eris::usize index, const char** name, const char** version,
+                    const char** license, const char** state);
+
+eris::u64 eris_file_size(const char* path);
+eris::i64 eris_file_read(const char* path, void* buffer, eris::usize length);
 
 eris::usize eris_pci_device_count();
 bool eris_pci_device_at(eris::usize index, eris::u16* vendor, eris::u16* device,
