@@ -163,18 +163,43 @@ M:	farfromoffice
 S:	Maintained
 F:	modules/keyboard/
 
-DESKTOP MODULE
+FRAMEBUFFER AND POINTER MODULES
+M:	farfromoffice
+S:	Maintained
+F:	modules/fbdev/
+F:	modules/ps2mouse/
+P:	The aperture is device memory and is never read back. The mouse
+	shares its controller with the keyboard, so the keyboard line stays
+	masked while the second port is set up.
+T:	./scripts/desktop-test.sh
+
+DESKTOP SHELL
 M:	farfromoffice
 S:	Maintained
 F:	modules/desktop/
+F:	fonts/
 P:	It takes the VGA console away from the kernel log on purpose. Keep
-	serial output untouched.
+	serial output untouched. A frame is painted into memory on the work
+	thread and only the changed rows reach the screen; painting from a
+	timer callback brings the tearing back.
+T:	./scripts/desktop-test.sh
+
+DESKTOP APPLICATIONS
+M:	farfromoffice
+S:	Maintained
+F:	modules/internal_apps/
+F:	modules/desktop/app.hpp
+P:	The app ABI is what lets an app and the shell be built apart. An app
+	draws through the painter it is handed and touches nothing else.
+T:	./scripts/desktop-test.sh
 
 BUILD SYSTEM AND SCRIPTS
 M:	farfromoffice
 S:	Maintained
 F:	Makefile
 F:	scripts/
+P:	gen-icon.py and subset-font.py produce committed files and the build
+	does not run them. Run them when an icon or a face changes.
 T:	make clean && make
 
 CONTINUOUS INTEGRATION
