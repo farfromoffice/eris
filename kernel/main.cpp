@@ -9,6 +9,8 @@
 #include <eris/io.hpp>
 #include <eris/irq.hpp>
 #include <eris/acpi.hpp>
+#include <eris/elf.hpp>
+#include <eris/initrd.hpp>
 #include <eris/atomic.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
@@ -284,6 +286,8 @@ void thread_selftest()
 }
 
 void report_modules();
+void load_initrd_modules();
+void module_selftest();
 void time_selftest();
 void smp_selftest();
 void thread_selftest();
@@ -296,6 +300,7 @@ void kernel_init(void*)
         time_selftest();
 
     module_init_builtin();
+    load_initrd_modules();
     report_modules();
 
     if (cmdline_has("smptest"))
@@ -303,6 +308,9 @@ void kernel_init(void*)
 
     if (cmdline_has("threadtest"))
         thread_selftest();
+
+    if (cmdline_has("kotest"))
+        module_selftest();
 
     if (cmdline_has("test_exit")) {
         pr_info("selftests finished, leaving\n");
@@ -320,6 +328,131 @@ ERIS_NORETURN void idle_loop()
         yield();
         arch::hlt();
     }
+}
+
+bool blacklisted(const char* name)
+{
+    const char* list = cmdline_value("modules.blacklist");
+    if (list == nullptr)
+        return false;
+
+    const usize length = strlen(name);
+    for (const char* p = list; *p != '\0';) {
+        const char* start = p;
+        while (*p != '\0' && *p != ',')
+            ++p;
+
+        if (static_cast<usize>(p - start) == length && memcmp(start, name, length) == 0)
+            return true;
+
+        if (*p == ',')
+            ++p;
+    }
+
+    return false;
+}
+
+// Everything the initrd carries is loaded unless the command line says
+// otherwise, and then whatever registered gets its init run.
+void load_initrd_modules()
+{
+    if (!initrd_available() || cmdline_has("modules.noload"))
+        return;
+
+    for (usize i = 0; i < initrd_file_count(); ++i) {
+        const char* name = nullptr;
+        usize length = 0;
+
+        const void* data = initrd_data_at(i, name, length);
+        if (data == nullptr || length == 0)
+            continue;
+
+        module_load_image(data, length, name);
+    }
+
+    for (usize i = 0; i < module_count(); ++i) {
+        Module* module = module_at(i);
+        if (module == nullptr || module->state != ModuleState::Registered)
+            continue;
+
+        if (blacklisted(module->info->name)) {
+            pr_info("module %s is blacklisted, left alone\n", module->info->name);
+            continue;
+        }
+
+        module_load(module->info->name);
+    }
+}
+
+// Loads, unloads and reloads a module that was never linked into the image,
+// then checks the pages came back and that a stale ABI stamp is refused.
+void module_selftest()
+{
+    const char* name = "desktop";
+
+    const char* file = nullptr;
+    usize length = 0;
+    const void* image = initrd_data_at(0, file, length);
+
+    if (image == nullptr) {
+        pr_err("module selftest: the initrd carries nothing to load\n");
+        return;
+    }
+
+    const Module* module = module_find(name);
+    if (module == nullptr || module->state != ModuleState::Ready) {
+        pr_err("module selftest: %s did not load from the initrd\n", name);
+        return;
+    }
+
+    const usize before_unload = mm::free_pages_count();
+    if (module_unload(name) != 0) {
+        pr_err("module selftest: %s refused to unload\n", name);
+        return;
+    }
+
+    const usize after_unload = mm::free_pages_count();
+    if (module_find(name) != nullptr)
+        pr_err("module selftest: %s is still in the table after unloading\n", name);
+
+    pr_info("module selftest: unloading %s returned %lu pages\n",
+            name, static_cast<u64>(after_unload - before_unload));
+
+    // A copy with the wrong stamp has to be refused rather than run.
+    auto* copy = static_cast<u8*>(kmalloc(length));
+    if (copy != nullptr) {
+        memcpy(copy, image, length);
+        const auto* header = reinterpret_cast<const elf::Header*>(copy);
+        const auto* sections = reinterpret_cast<const elf::SectionHeader*>(
+            copy + header->section_header_offset);
+
+        for (u16 i = 0; i < header->section_header_count; ++i) {
+            if (sections[i].size >= sizeof(ModuleInfo) && sections[i].type == elf::section_progbits
+                && sections[i].size % sizeof(ModuleInfo) == 0) {
+                auto* candidate = reinterpret_cast<u32*>(copy + sections[i].offset);
+                if (*candidate == module_abi_version)
+                    *candidate = module_abi_version + 1;
+            }
+        }
+
+        if (module_load_image(copy, length, "a module from the future") == 0)
+            pr_err("module selftest: an image with the wrong abi was accepted\n");
+        else
+            pr_info("module selftest: an image with the wrong abi was refused\n");
+
+        kfree(copy);
+    }
+
+    if (module_load_image(image, length, file) != 0 || module_load(name) != 0) {
+        pr_err("module selftest: %s did not come back\n", name);
+        return;
+    }
+
+    const usize after_reload = mm::free_pages_count();
+    pr_info("module selftest: %s reloaded, %lu pages free before and %lu after the round trip\n",
+            name,
+            static_cast<u64>(before_unload),
+            static_cast<u64>(after_reload));
 }
 
 void report_memory()
@@ -372,6 +505,7 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     mm::paging_init();
     mm::heap_init();
 
+    initrd_init(multiboot_magic, multiboot_info);
     acpi::init();
     arch::irq_init();
     clock_init();

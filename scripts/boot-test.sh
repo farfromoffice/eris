@@ -4,6 +4,7 @@
 set -euo pipefail
 
 KERNEL=${KERNEL:-build/eris32.elf}
+INITRD=${INITRD:-build/initrd.tar}
 TIMEOUT=${TIMEOUT:-20}
 LOG=${LOG:-build/boot.log}
 
@@ -15,8 +16,14 @@ fi
 mkdir -p "$(dirname "$LOG")"
 rm -f "$LOG"
 
+initrd_args=()
+if [[ -f $INITRD ]]; then
+    initrd_args=(-initrd "$INITRD")
+fi
+
 timeout "$TIMEOUT" qemu-system-x86_64 \
     -kernel "$KERNEL" \
+    "${initrd_args[@]}" \
     -serial "file:$LOG" \
     -display none \
     -no-reboot \
@@ -33,6 +40,7 @@ expected=(
     "module vga"
     "module keyboard"
     "module desktop"
+    "module loader:"
 )
 
 status=0

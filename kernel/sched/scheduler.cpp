@@ -255,13 +255,27 @@ Thread* Thread::spawn(const char* name, ThreadEntry entry, void* argument)
     if (thread == nullptr)
         return nullptr;
 
-    const phys_addr frames = mm::alloc_pages(stack_pages);
-    if (frames == 0) {
+    // One page below the stack stays unmapped, so a thread that runs off the
+    // end faults instead of walking into whatever was allocated before it.
+    const virt_addr region = mm::vmalloc_reserve((stack_pages + 1) * page_size);
+    if (region == 0) {
         kfree(thread);
         return nullptr;
     }
 
-    thread->stack_base_ = mm::phys_to_virt(frames);
+    for (usize i = 0; i < stack_pages; ++i) {
+        const phys_addr frame = mm::alloc_page();
+        if (frame == 0) {
+            mm::vmalloc_release(region, (stack_pages + 1) * page_size);
+            kfree(thread);
+            return nullptr;
+        }
+
+        mm::AddressSpace::kernel().map(region + (i + 1) * page_size, frame, page_size,
+                                       mm::PageFlags::Write | mm::PageFlags::NoExecute);
+    }
+
+    thread->stack_base_ = region + page_size;
     thread->stack_pages_ = stack_pages;
 
     Scheduler::prepare(thread, name, entry, argument);
