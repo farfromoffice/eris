@@ -218,11 +218,16 @@ console app shows the same stream inside a window.
   that releases it. Code that keeps a pointer into an image for longer, a
   registered block device for instance, holds a reference through
   `module_get_owner` instead and a module in use refuses to unload.
-* A module that unloads is `Unloading` for as long as its exit runs. The state
-  is claimed under the table lock which keeps a second unload and any new
-  `module_get` out while the lock is dropped for the exit itself. The table is
-  only rearranged under that lock. A pointer into it is never held across
-  the gap: the unload path looks the module up again by name.
+* A module that unloads is `Unloading` from the moment the unload claims it
+  until it is gone: a loadable one until its slot leaves the table, a builtin
+  one until the end because a builtin keeps its slot and its code and becomes
+  `Registered` again. The state is claimed under the table lock and it is
+  what keeps a second unload, a `module_get` and a `module_load` out while the
+  lock is dropped for the exit and for the callback drain. Going back to
+  `Registered` any earlier lets a load on another core run the module's init
+  and revive code that this unload is about to free. The table is only
+  rearranged under that lock. A pointer into it is never held across the gap:
+  the unload path looks the module up again by name.
 * The module ABI hands out copies, never pointers into an image. The strings in
   a descriptor live in the module's own pages. `eris_module_at` fills an
   `ErisModuleInfo` the caller owns.

@@ -291,11 +291,16 @@ int module_unload(const char* name)
             return -1;
 
         release_dependencies(*module);
-        module->state = ModuleState::Registered;
+
+        // A builtin module keeps its slot and its code, so it is registered
+        // again and available to load. A loadable one stays Unloading until
+        // its slot is gone: a load on another core would otherwise run its
+        // init and mark it Ready while this one is still on its way to
+        // freeing the very image that init just brought back to life.
+        if (base == 0)
+            module->state = ModuleState::Registered;
     }
 
-    // A builtin module keeps its slot: its code is part of the kernel image
-    // and nothing is handed back.
     if (base == 0) {
         pr_info("module %s unloaded\n", wanted);
         return 0;
