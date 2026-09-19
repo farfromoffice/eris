@@ -1,0 +1,33 @@
+name: devices
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  bus:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential nasm qemu-system-x86
+
+      - name: Build
+        run: make
+
+      - name: Walk the bus and drive a disk
+        run: ./scripts/device-test.sh
+
+      - name: Upload the log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: device-log
+          path: build/device.log
+          retention-days: 7

@@ -10,10 +10,12 @@
 #include <eris/irq.hpp>
 #include <eris/acpi.hpp>
 #include <eris/elf.hpp>
+#include <eris/export.hpp>
 #include <eris/initrd.hpp>
 #include <eris/atomic.hpp>
 #include <eris/mm.hpp>
 #include <eris/paging.hpp>
+#include <eris/pci.hpp>
 #include <eris/module.hpp>
 #include <eris/panic.hpp>
 #include <eris/printk.hpp>
@@ -288,6 +290,7 @@ void thread_selftest()
 void report_modules();
 void load_initrd_modules();
 void module_selftest();
+void block_selftest();
 void time_selftest();
 void smp_selftest();
 void thread_selftest();
@@ -300,6 +303,11 @@ void kernel_init(void*)
         time_selftest();
 
     module_init_builtin();
+
+    // The bus is walked before the loadable modules arrive, so a driver finds
+    // its device the moment its init runs.
+    pci::init();
+
     load_initrd_modules();
     report_modules();
 
@@ -311,6 +319,9 @@ void kernel_init(void*)
 
     if (cmdline_has("kotest"))
         module_selftest();
+
+    if (cmdline_has("blktest"))
+        block_selftest();
 
     if (cmdline_has("test_exit")) {
         pr_info("selftests finished, leaving\n");
@@ -390,9 +401,9 @@ void module_selftest()
 {
     const char* name = "desktop";
 
-    const char* file = nullptr;
+    const char* file = "desktop.ko";
     usize length = 0;
-    const void* image = initrd_data_at(0, file, length);
+    const void* image = initrd_find("desktop", length);
 
     if (image == nullptr) {
         pr_err("module selftest: the initrd carries nothing to load\n");
@@ -453,6 +464,66 @@ void module_selftest()
             name,
             static_cast<u64>(before_unload),
             static_cast<u64>(after_reload));
+}
+
+// Calls a module through the export table, which is the only way the kernel is
+// allowed to reach code it was not linked with.
+void block_selftest()
+{
+    using ReadFn = bool (*)(u64, void*, usize);
+    using WriteFn = bool (*)(u64, const void*, usize);
+    using CapacityFn = u64 (*)();
+
+    auto read = reinterpret_cast<ReadFn>(symbol_lookup("virtio_blk_read"));
+    auto write = reinterpret_cast<WriteFn>(symbol_lookup("virtio_blk_write"));
+    auto capacity = reinterpret_cast<CapacityFn>(symbol_lookup("virtio_blk_capacity"));
+
+    if (read == nullptr || write == nullptr || capacity == nullptr) {
+        pr_err("block selftest: the driver exports nothing to call\n");
+        return;
+    }
+
+    const phys_addr frame = mm::alloc_page();
+    if (frame == 0)
+        return;
+
+    auto* buffer = reinterpret_cast<u8*>(mm::phys_to_virt(frame));
+    memset(buffer, 0, page_size);
+
+    if (!read(0, buffer, 1)) {
+        pr_err("block selftest: reading sector 0 failed\n");
+        mm::free_page(frame);
+        return;
+    }
+
+    buffer[31] = '\0';
+    pr_info("block selftest: %lu sectors, sector 0 reads \"%s\"\n", capacity(), buffer);
+
+    // Write a sector and read it back, which is the only way to know the
+    // descriptor chain is right in both directions.
+    constexpr const char* marker = "written by the block selftest";
+    memset(buffer, 0, page_size);
+    memcpy(buffer, marker, strlen(marker) + 1);
+
+    if (!write(4, buffer, 1)) {
+        pr_err("block selftest: writing sector 4 failed\n");
+        mm::free_page(frame);
+        return;
+    }
+
+    memset(buffer, 0, page_size);
+    if (!read(4, buffer, 1)) {
+        pr_err("block selftest: reading sector 4 back failed\n");
+        mm::free_page(frame);
+        return;
+    }
+
+    if (strcmp(reinterpret_cast<const char*>(buffer), marker) != 0)
+        pr_err("block selftest: the sector came back as \"%s\"\n", buffer);
+    else
+        pr_info("block selftest: sector 4 came back byte for byte\n");
+
+    mm::free_page(frame);
 }
 
 void report_memory()
