@@ -17,6 +17,7 @@
 #include <eris/printk.hpp>
 #include <eris/string.hpp>
 #include <eris/serial.hpp>
+#include <eris/thread.hpp>
 #include <eris/time.hpp>
 #include <eris/work.hpp>
 #include <eris/version.hpp>
@@ -204,6 +205,123 @@ void smp_selftest()
         pr_err("smp selftest: the refcount did not come back to where it started\n");
 }
 
+constinit Atomic<u64> worker_rounds{0};
+constinit Atomic<u32> workers_finished{0};
+constinit WaitQueue gate{};
+constinit Atomic<bool> gate_opened{false};
+
+void counting_worker(void* argument)
+{
+    const auto rounds = reinterpret_cast<u64>(argument);
+
+    for (u64 i = 0; i < rounds; ++i) {
+        worker_rounds.fetch_add(1);
+        if ((i % 64) == 0)
+            yield();
+    }
+
+    workers_finished.fetch_add(1);
+}
+
+void sleeping_worker(void* argument)
+{
+    const auto milliseconds = reinterpret_cast<u64>(argument);
+    const u64 start = monotonic_ns();
+
+    thread_sleep_ms(milliseconds);
+
+    const u64 slept = (monotonic_ns() - start) / 1000000;
+    pr_info("thread selftest: %s asked for %lu ms and slept %lu ms\n",
+            current_thread()->name(), milliseconds, slept);
+
+    workers_finished.fetch_add(1);
+}
+
+void blocked_worker(void*)
+{
+    gate.wait();
+
+    if (!gate_opened.load())
+        pr_err("thread selftest: a thread woke before the gate opened\n");
+
+    workers_finished.fetch_add(1);
+}
+
+// Threads that do nothing prove nothing: these count, sleep and block, and the
+// numbers have to add up at the end.
+void thread_selftest()
+{
+    constexpr u64 rounds = 20000;
+    constexpr u32 counters = 4;
+
+    workers_finished.store(0);
+    worker_rounds.store(0);
+
+    for (u32 i = 0; i < counters; ++i)
+        Thread::spawn("counter", counting_worker, reinterpret_cast<void*>(rounds));
+
+    Thread::spawn("sleeper", sleeping_worker, reinterpret_cast<void*>(u64{50}));
+    Thread::spawn("waiter", blocked_worker, nullptr);
+
+    const u64 deadline = monotonic_ns() + 3000000000ULL;
+    while (workers_finished.load() < counters + 1 && monotonic_ns() < deadline)
+        yield();
+
+    gate_opened.store(true);
+    gate.wake_all();
+
+    while (workers_finished.load() < counters + 2 && monotonic_ns() < deadline)
+        yield();
+
+    pr_info("thread selftest: %u of %u threads finished, %lu rounds counted, %lu threads alive\n",
+            workers_finished.load(),
+            counters + 2,
+            worker_rounds.load(),
+            static_cast<u64>(thread_count()));
+
+    if (worker_rounds.load() != rounds * counters)
+        pr_err("thread selftest: lost %lu rounds\n", rounds * counters - worker_rounds.load());
+}
+
+void report_modules();
+void time_selftest();
+void smp_selftest();
+void thread_selftest();
+void inject_fault(const char* kind);
+
+// The second half of the boot sequence, running as the first kernel thread.
+void kernel_init(void*)
+{
+    if (cmdline_has("timetest"))
+        time_selftest();
+
+    module_init_builtin();
+    report_modules();
+
+    if (cmdline_has("smptest"))
+        smp_selftest();
+
+    if (cmdline_has("threadtest"))
+        thread_selftest();
+
+    if (cmdline_has("test_exit")) {
+        pr_info("selftests finished, leaving\n");
+        arch::outb(0xF4, 0x10);
+    }
+
+    if (const char* kind = cmdline_value("fault"); kind != nullptr)
+        inject_fault(kind);
+}
+
+ERIS_NORETURN void idle_loop()
+{
+    for (;;) {
+        work_run_pending();
+        yield();
+        arch::hlt();
+    }
+}
+
 void report_memory()
 {
     const auto free = mm::free_pages_count();
@@ -266,29 +384,16 @@ void start_kernel(u32 multiboot_magic, u64 multiboot_info)
     arch::sti();
 
     arch::smp_init();
+    sched_init();
 
-    if (cmdline_has("timetest"))
-        time_selftest();
+    // Everything from here runs in a thread, so a module init is allowed to
+    // sleep on hardware instead of spinning on it.
+    work_start();
 
-    module_init_builtin();
-    report_modules();
+    if (Thread::spawn("kinit", kernel_init, nullptr) == nullptr)
+        panic("kinit: no thread to finish booting in");
 
-    if (cmdline_has("smptest"))
-        smp_selftest();
-
-    // Lets a test run end the machine instead of waiting out a timeout.
-    if (cmdline_has("test_exit")) {
-        pr_info("selftests finished, leaving\n");
-        arch::outb(0xF4, 0x10);
-    }
-
-    if (const char* kind = cmdline_value("fault"); kind != nullptr)
-        inject_fault(kind);
-
-    for (;;) {
-        work_run_pending();
-        arch::hlt();
-    }
+    idle_loop();
 }
 
 } // namespace eris
