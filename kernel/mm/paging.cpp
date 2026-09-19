@@ -134,7 +134,7 @@ bool AddressSpace::split_huge_page(u64* directory_entry, virt_addr address)
     return true;
 }
 
-u64* AddressSpace::table_for(virt_addr address, bool create)
+u64* AddressSpace::table_for(virt_addr address, bool create, bool user)
 {
     u64* table = table_at(root_);
 
@@ -151,6 +151,11 @@ u64* AddressSpace::table_for(virt_addr address, bool create)
 
             entry = virt_to_phys(reinterpret_cast<virt_addr>(next)) | pte_present | pte_write;
         }
+
+        // Access is the intersection of every level, so a user mapping needs
+        // the whole path marked as well, not just the last entry.
+        if (user)
+            entry |= pte_user;
 
         if (level == 1 && (entry & pte_huge) != 0) {
             if (!create)
@@ -170,8 +175,10 @@ bool AddressSpace::map(virt_addr address, phys_addr frame, usize length, PageFla
     IrqGuard guard(table_lock);
     const u64 bits = encode(flags);
 
+    const bool user = has(flags, PageFlags::User);
+
     for (usize offset = 0; offset < length; offset += page_size) {
-        u64* table = table_for(address + offset, true);
+        u64* table = table_for(address + offset, true, user);
         if (table == nullptr)
             return false;
 
@@ -206,9 +213,10 @@ bool AddressSpace::protect(virt_addr address, usize length, PageFlags flags)
 {
     IrqGuard guard(table_lock);
     const u64 bits = encode(flags);
+    const bool user = has(flags, PageFlags::User);
 
     for (usize offset = 0; offset < length; offset += page_size) {
-        u64* table = table_for(address + offset, true);
+        u64* table = table_for(address + offset, true, user);
         if (table == nullptr)
             return false;
 

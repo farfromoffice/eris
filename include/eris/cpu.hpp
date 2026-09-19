@@ -27,17 +27,27 @@ struct ERIS_PACKED Tss {
 
 // Everything one CPU owns. Reached through gs, so a handler never has to work
 // out which core it is running on.
+// The order matters: sysret takes the user segments from one base selector, so
+// user data has to sit directly before user code.
+inline constexpr u16 selector_kernel_code = 0x08;
+inline constexpr u16 selector_kernel_data = 0x10;
+inline constexpr u16 selector_user_base = 0x18;
+inline constexpr u16 selector_user_data = 0x20;
+inline constexpr u16 selector_user_code = 0x28;
+inline constexpr u16 selector_tss = 0x30;
+
 struct PerCpu {
     PerCpu* self;
     u32 index;
     u32 apic_id;
     bool online;
     virt_addr kernel_stack_top;
+    virt_addr user_stack;
     u64 interrupts;
     void* current_thread;
     void* idle_thread;
     u32 preempt_count;
-    u64 gdt[7];
+    u64 gdt[9];
     Tss tss;
 };
 
@@ -71,5 +81,10 @@ using SmpJob = void (*)();
 
 // Runs a function on every application processor and waits for them to finish.
 bool smp_run_on_others(SmpJob job, u64 timeout_ns);
+
+// The syscall entry stub reaches these through gs, so their offsets are part of
+// the contract with kernel/proc/syscall_entry.asm.
+static_assert(__builtin_offsetof(PerCpu, kernel_stack_top) == 24);
+static_assert(__builtin_offsetof(PerCpu, user_stack) == 32);
 
 } // namespace eris::arch

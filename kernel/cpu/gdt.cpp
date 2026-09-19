@@ -14,7 +14,7 @@ struct ERIS_PACKED GdtPointer {
     u64 base;
 };
 
-constexpr u16 tss_selector = 0x18;
+
 
 // Flat descriptors: in long mode the base and limit are ignored, only the
 // access and flag bits carry meaning.
@@ -51,25 +51,27 @@ void load(PerCpu& cpu)
 void gdt_init_cpu(PerCpu& cpu)
 {
     cpu.gdt[0] = 0;
-    cpu.gdt[1] = descriptor(0x9A, 0xA);
-    cpu.gdt[2] = descriptor(0x92, 0xA);
-    cpu.gdt[3] = 0;
-    cpu.gdt[4] = 0;
-    cpu.gdt[5] = 0;
+    cpu.gdt[1] = descriptor(0x9A, 0xA); // kernel code
+    cpu.gdt[2] = descriptor(0x92, 0xA); // kernel data
+    cpu.gdt[3] = descriptor(0xFA, 0xC); // the 32 bit user code sysret expects
+    cpu.gdt[4] = descriptor(0xF2, 0xA); // user data
+    cpu.gdt[5] = descriptor(0xFA, 0xA); // user code
     cpu.gdt[6] = 0;
+    cpu.gdt[7] = 0;
+    cpu.gdt[8] = 0;
 
     const auto base = reinterpret_cast<u64>(&cpu.tss);
     const u32 limit = sizeof(cpu.tss) - 1;
 
-    cpu.gdt[3] = (static_cast<u64>(limit) & 0xFFFF)
+    cpu.gdt[6] = (static_cast<u64>(limit) & 0xFFFF)
         | ((base & 0xFFFFFF) << 16)
         | (static_cast<u64>(0x89) << 40)
         | (((static_cast<u64>(limit) >> 16) & 0xF) << 48)
         | (((base >> 24) & 0xFF) << 56);
-    cpu.gdt[4] = base >> 32;
+    cpu.gdt[7] = base >> 32;
 
     load(cpu);
-    asm volatile("ltr %0" : : "r"(tss_selector));
+    asm volatile("ltr %0" : : "r"(selector_tss));
 }
 
 void gdt_init()

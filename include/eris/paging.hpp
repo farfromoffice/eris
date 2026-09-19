@@ -56,7 +56,7 @@ public:
     void adopt(phys_addr root) { root_ = root; }
 
 private:
-    u64* table_for(virt_addr address, bool create);
+    u64* table_for(virt_addr address, bool create, bool user = false);
     bool split_huge_page(u64* directory_entry, virt_addr address);
 
     phys_addr root_ = 0;
