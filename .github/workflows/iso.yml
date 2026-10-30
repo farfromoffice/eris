@@ -9,7 +9,7 @@ jobs:
   image:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install toolchain and GRUB
         run: |
@@ -25,7 +25,7 @@ jobs:
           grub-mkrescue -o build/eris.iso build/iso
 
       - name: Upload the ISO
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: eris-iso
           path: build/eris.iso
