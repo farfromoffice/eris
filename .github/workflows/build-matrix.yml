@@ -15,7 +15,7 @@ jobs:
         compiler: [g++-13, g++-14]
         optimisation: ['-O0', '-O2', '-Os']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install toolchain
         run: |
