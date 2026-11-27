@@ -15,7 +15,7 @@ jobs:
       matrix:
         cpus: [1, 2, 4]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install toolchain and QEMU
         run: |
@@ -30,7 +30,7 @@ jobs:
 
       - name: Upload the log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: thread-log-${{ matrix.cpus }}
           path: build/thread.log
